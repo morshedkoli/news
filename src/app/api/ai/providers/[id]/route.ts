@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dbAdmin } from '@/lib/firebase-admin';
 
-export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+interface RouteParams {
+    params: Promise<{ id: string }>;
+}
+
+export async function PUT(req: NextRequest, { params }: RouteParams) {
     try {
         const { id } = await params;
         const body = await req.json();
@@ -14,7 +18,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: NextRequest, { params }: RouteParams) {
     try {
         const { id } = await params;
 
