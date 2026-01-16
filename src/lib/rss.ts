@@ -19,7 +19,7 @@ export async function parseRssFeed(feedUrl: string): Promise<RssItem[]> {
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to fetch RSS: ${response.statusContext}`);
+            throw new Error(`Failed to fetch RSS: ${response.statusText}`);
         }
 
         const xmlData = await response.text();
