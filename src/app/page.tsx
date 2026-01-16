@@ -1,65 +1,161 @@
-import Image from "next/image";
+"use client";
+
+import { useAuth } from "@/context/AuthContext";
+import { db } from "@/lib/firebase";
+import { format } from "date-fns";
+import { collection, getCountFromServer, query, where, Timestamp, orderBy, limit, getDocs, getAggregateFromServer, sum } from "firebase/firestore";
+import { BarChart3, Heart, Newspaper, Calendar } from "lucide-react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
 
 export default function Home() {
+  const { user } = useAuth();
+  const [stats, setStats] = useState({
+    totalNews: 0,
+    todayNews: 0,
+    totalLikes: 0,
+  });
+  const [recentNews, setRecentNews] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const newsColl = collection(db, "news");
+
+        // 1. Stats
+        // Total News
+        const totalSnapshot = await getCountFromServer(newsColl);
+
+        // Today's News
+        const startOfDay = new Date();
+        startOfDay.setHours(0, 0, 0, 0);
+        const todayQuery = query(newsColl, where("published_at", ">=", Timestamp.fromDate(startOfDay)));
+        const todaySnapshot = await getCountFromServer(todayQuery);
+
+        // Total Likes (Aggregation)
+        const likesSnapshot = await getAggregateFromServer(newsColl, {
+          totalLikes: sum('likes')
+        });
+
+        setStats({
+          totalNews: totalSnapshot.data().count,
+          todayNews: todaySnapshot.data().count,
+          totalLikes: likesSnapshot.data().totalLikes || 0,
+        });
+
+        // 2. Recent News
+        const recentQuery = query(newsColl, orderBy("published_at", "desc"), limit(5));
+        const recentDocs = await getDocs(recentQuery);
+        setRecentNews(recentDocs.docs.map(d => ({ id: d.id, ...d.data() })));
+
+      } catch (error) {
+        console.error("Error fetching dashboard data:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    if (user) {
+      fetchData();
+    }
+  }, [user]);
+
+  if (loading) {
+    return <div className="p-4">Loading dashboard...</div>;
+  }
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="space-y-6">
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-slate-800">Dashboard</h1>
+        <p className="text-slate-500">Welcome back, {user?.displayName || "Admin"}. Here's what's happening today.</p>
+      </div>
+
+      {/* Stats Grid */}
+      <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
+        {/* Total News */}
+        <div className="rounded-xl bg-white p-6 shadow-sm border border-slate-100 flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium text-slate-500">Total News</p>
+            <p className="mt-2 text-3xl font-bold text-slate-900">{stats.totalNews}</p>
+          </div>
+          <div className="p-3 bg-blue-50 rounded-lg text-blue-600">
+            <Newspaper size={24} />
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        {/* Today's News */}
+        <div className="rounded-xl bg-white p-6 shadow-sm border border-slate-100 flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium text-slate-500">Published Today</p>
+            <p className="mt-2 text-3xl font-bold text-slate-900">{stats.todayNews}</p>
+          </div>
+          <div className="p-3 bg-indigo-50 rounded-lg text-indigo-600">
+            <Calendar size={24} />
+          </div>
         </div>
-      </main>
+
+        {/* Total Likes */}
+        <div className="rounded-xl bg-white p-6 shadow-sm border border-slate-100 flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium text-slate-500">Total Engagement</p>
+            <p className="mt-2 text-3xl font-bold text-slate-900">{stats.totalLikes}</p>
+          </div>
+          <div className="p-3 bg-rose-50 rounded-lg text-rose-600">
+            <Heart size={24} />
+          </div>
+        </div>
+      </div>
+
+      {/* Recent News Table */}
+      <div className="rounded-xl bg-white shadow-sm border border-slate-100 overflow-hidden">
+        <div className="border-b border-slate-100 px-6 py-4 flex items-center justify-between">
+          <h3 className="font-semibold text-slate-800">Recent News</h3>
+          <Link href="/news" className="text-sm font-medium text-indigo-600 hover:text-indigo-800">
+            View All
+          </Link>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm text-slate-600">
+            <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+              <tr>
+                <th className="px-6 py-3 font-medium">Title</th>
+                <th className="px-6 py-3 font-medium">Source</th>
+                <th className="px-6 py-3 font-medium">Date</th>
+                <th className="px-6 py-3 font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {recentNews.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-6 py-4 text-center text-slate-400">No news found</td>
+                </tr>
+              ) : (
+                recentNews.map((news) => (
+                  <tr key={news.id} className="hover:bg-slate-50/50">
+                    <td className="px-6 py-4 font-medium text-slate-900">
+                      <div className="line-clamp-1 max-w-md">{news.title}</div>
+                    </td>
+                    <td className="px-6 py-4">
+                      {news.source_name || "Unknown"}
+                    </td>
+                    <td className="px-6 py-4">
+                      {news.published_at?.seconds ? format(new Date(news.published_at.seconds * 1000), "MMM d, p") : "N/A"}
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${news.published !== false ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-800"
+                        }`}>
+                        {news.published !== false ? "Published" : "Draft"}
+                      </span>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }
