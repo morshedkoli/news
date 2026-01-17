@@ -1,5 +1,4 @@
-// import { Readability } from "@mozilla/readability";
-// import { JSDOM } from "jsdom";
+import * as cheerio from 'cheerio';
 
 export interface ArticleData {
     title: string;
@@ -17,21 +16,15 @@ export type FetchResult =
 
 export async function fetchArticle(url: string): Promise<FetchResult> {
     try {
-        console.log(`📡 Fetching article: ${url}`);
-
-        // Dynamic Import to prevent serverless crash on module load
-        const { JSDOM } = await import("jsdom");
-        const { Readability } = await import("@mozilla/readability");
+        console.log(`📡 Fetching article (Cheerio): ${url}`);
 
         const response = await fetch(url, {
-            // Safety: 15s timeout
-            signal: AbortSignal.timeout(15000),
+            signal: AbortSignal.timeout(15000), // 15s Timeout
             headers: {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.9,bn;q=0.8",
             },
-            referrerPolicy: "no-referrer",
         });
 
         if (!response.ok) {
@@ -45,37 +38,69 @@ export async function fetchArticle(url: string): Promise<FetchResult> {
             return { success: false, error: "Received empty or too short content" };
         }
 
-        const dom = new JSDOM(html, { url });
-        const doc = dom.window.document;
+        // LOAD CHEERIO
+        const $ = cheerio.load(html);
 
-        // Extract OpenGraph Image
-        const ogImage = doc.querySelector('meta[property="og:image"]')?.getAttribute("content") ||
-            doc.querySelector('meta[name="twitter:image"]')?.getAttribute("content") ||
+        // 1. Remove Trash (Scripts, Styles, Ads)
+        $('script, style, iframe, noscript, nav, header, footer, svg, .ad, .ads, .social-share, .comments').remove();
+
+        // 2. Extract Metadata
+        const title =
+            $('meta[property="og:title"]').attr('content') ||
+            $('title').text() ||
+            "";
+
+        const ogImage =
+            $('meta[property="og:image"]').attr('content') ||
+            $('meta[name="twitter:image"]').attr('content') ||
             null;
 
-        // Extract Site Name
-        const siteName = doc.querySelector('meta[property="og:site_name"]')?.getAttribute("content") ||
+        const siteName =
+            $('meta[property="og:site_name"]').attr('content') ||
             new URL(url).hostname;
 
-        const reader = new Readability(doc);
-        const article = reader.parse();
+        // 3. Extract Main Content (Heuristic)
+        // Try common selectors for news sites
+        let contentEl = $('article');
+        if (contentEl.length === 0) contentEl = $('main');
+        if (contentEl.length === 0) contentEl = $('.content');
+        if (contentEl.length === 0) contentEl = $('#content');
+        if (contentEl.length === 0) contentEl = $('.main');
+        if (contentEl.length === 0) contentEl = $('.post-body');
+        if (contentEl.length === 0) contentEl = $('.entry-content');
 
-        if (!article) {
-            return { success: false, error: "Readability failed to parse content" };
+        // Fallback: Use Body but be careful
+        if (contentEl.length === 0) contentEl = $('body');
+
+        // Get inner HTML and Text
+        const contentHtml = contentEl.html() || "";
+        let textContent = contentEl.text();
+
+        // 4. Normalize Whitespace
+        textContent = textContent.replace(/\s+/g, ' ').trim();
+
+        // 5. Generate Excerpt
+        const excerpt = textContent.slice(0, 300) + (textContent.length > 300 ? "..." : "");
+
+        const articleData: ArticleData = {
+            title: title.trim(),
+            content: contentHtml,
+            textContent: textContent,
+            excerpt: excerpt,
+            byline: "", // Hard to extract reliably without Readability
+            siteName: siteName,
+            image: ogImage
+        };
+
+        if (textContent.length < 50) {
+            return { success: false, error: "Extracted content is too short (possible parsing failure)" };
         }
 
         return {
             success: true,
-            data: {
-                title: article.title || "",
-                content: article.content || "",
-                textContent: article.textContent || "",
-                excerpt: article.excerpt || "",
-                byline: article.byline || "",
-                siteName: siteName || "",
-                image: ogImage || null,
-            }
+            data: articleData
         };
+
     } catch (error: any) {
         console.error("Error fetching article:", error);
         return {
