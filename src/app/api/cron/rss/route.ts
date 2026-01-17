@@ -276,7 +276,14 @@ export async function GET(req: NextRequest) {
     } catch (criticalError: any) {
         console.error("CRITICAL CRON FAILURE", criticalError);
         // Emergency Unlock
-        await SETTINGS_DOC_REF.update({ global_lock_until: null });
-        return NextResponse.json({ error: criticalError.message }, { status: 500 });
+        try {
+            await SETTINGS_DOC_REF.update({ global_lock_until: null });
+        } catch (e) { console.error("Failed to unlock", e); }
+
+        return NextResponse.json({
+            error: "Critical Internal Error",
+            details: criticalError.message,
+            stack: criticalError.stack
+        }, { status: 500 });
     }
 }
