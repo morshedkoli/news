@@ -8,6 +8,7 @@ import { FieldValue } from "firebase-admin/firestore";
 export const runtime = 'nodejs';
 export const maxDuration = 60; // Allow 60s for fetching/AI
 
+// Update System Prompt to be stricter
 const SYSTEM_PROMPT = `You are a professional Bangla news editor.
 Rules:
 - Write in Bangla only
@@ -17,6 +18,7 @@ Rules:
 - Do NOT add new facts or guess missing info
 - Use short paragraphs (max 6 paragraphs, max 2 lines each)
 - Max 120 words total
+- **IMPORTANT: Output strictly valid JSON. Do NOT use literal newlines inside strings. Use \\n for line breaks.**
 
 Output format JSON ONLY:
 {
@@ -98,14 +100,31 @@ export async function POST(req: Request) {
                     // Robust JSON extraction
                     let clean = aiKey.content.replace(/```json/g, "").replace(/```/g, "").trim();
 
-                    // Find first '{' and last '}' to handle potential prelude/postscript text
+                    // Find first '{' and last '}'
                     const firstOpen = clean.indexOf('{');
                     const lastClose = clean.lastIndexOf('}');
                     if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
                         clean = clean.substring(firstOpen, lastClose + 1);
                     }
 
-                    generated = JSON.parse(clean);
+                    try {
+                        generated = JSON.parse(clean);
+                    } catch (parseErr) {
+                        // JSON Parse Failed (likely due to newlines). Try Regex Extraction.
+                        console.warn("JSON Parse Failed, attempting Regex fallback...", parseErr);
+
+                        const titleMatch = clean.match(/"title"\s*:\s*"([^"]+)"/);
+                        const summaryMatch = clean.match(/"summary"\s*:\s*"([\s\S]*?)"\s*}/); // Match until closing brace
+
+                        if (summaryMatch) {
+                            generated = {
+                                title: titleMatch ? titleMatch[1] : article.title,
+                                summary: summaryMatch[1].replace(/\\n/g, '\n').trim() // Unescape if needed
+                            };
+                        } else {
+                            throw parseErr; // Regex failed too
+                        }
+                    }
 
                     // LAYER 3: Semantic Check
                     if (generated && generated.summary) {
@@ -120,9 +139,13 @@ export async function POST(req: Request) {
                         }
                     }
                 } catch (e) {
-                    console.warn("Soft Fail: JSON Parse Error, falling back to raw text.", e);
-                    // Fallback to raw text if JSON fails but content exists
-                    generated = { title: article.title, summary: aiKey.content };
+                    console.warn("Soft Fail: All Parsing failed. Fallback to excerpt.", e);
+                    // Fallback to extraction from original if parsing fails entirely
+                    // DO NOT return raw JSON string to user
+                    generated = {
+                        title: article.title,
+                        summary: article.excerpt || article.textContent.substring(0, 500) + "..."
+                    };
                 }
             } else {
                 throw new Error("All AI providers failed or returned empty.");
