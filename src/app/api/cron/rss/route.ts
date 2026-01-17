@@ -55,7 +55,16 @@ async function logSystemEvent(message: string, type: 'info' | 'error' | 'success
 
 export async function GET(req: NextRequest) {
     const executionStart = Date.now();
-    console.log("⏰ Master Cron Waking Up...");
+
+    // --- HYBRID CRON STRATEGY DOCUMENTATION ---
+    // Vercel Hobby Plan allows internal cron jobs only once per day.
+    // This endpoint is designed to be called by EXTERNAL cron services (e.g., cron-job.org)
+    // for frequent execution (e.g., every 10 minutes).
+    // The daily Vercel cron serves as a fallback safety trigger.
+    // ------------------------------------------
+
+    const source = req.headers.get('x-vercel-cron') ? 'Vercel Cron' : 'External/Manual';
+    console.log(`⏰ Master Cron Waking Up... Source: ${source}`);
 
     try {
         // 1. Load Settings
