@@ -10,8 +10,10 @@ import { calculateImportanceScore } from "@/lib/news-scorer";
 import { Timestamp, FieldValue } from "firebase-admin/firestore";
 
 // Allow execution to finish one feed (Vercel max is usually 10-60s on hobby, we target 30s)
+// Allow execution to finish one feed (Vercel max is usually 10-60s on hobby, we target 30s)
 export const maxDuration = 60;
 export const revalidate = 0;
+export const runtime = 'nodejs';
 
 const HELP_ALERTS_COLLECTION = "system_alerts";
 const SETTINGS_DOC_REF = dbAdmin.collection("system_stats").doc("rss_settings");

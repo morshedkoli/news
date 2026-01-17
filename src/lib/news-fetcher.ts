@@ -1,5 +1,5 @@
-import { Readability } from "@mozilla/readability";
-import { JSDOM } from "jsdom";
+// import { Readability } from "@mozilla/readability";
+// import { JSDOM } from "jsdom";
 
 export interface ArticleData {
     title: string;
@@ -13,6 +13,10 @@ export interface ArticleData {
 
 export async function fetchArticle(url: string): Promise<ArticleData | null> {
     try {
+        // Dynamic Import to prevent serverless crash on module load
+        const { JSDOM } = require("jsdom");
+        const { Readability } = require("@mozilla/readability");
+
         const response = await fetch(url, {
             headers: {
                 "User-Agent":
