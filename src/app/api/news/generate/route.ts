@@ -67,10 +67,16 @@ export async function POST(req: Request) {
         }
 
         // 1. Fetch Article Metadata & Content
-        const article = await fetchArticle(url);
-        if (!article) {
-            return NextResponse.json({ error: "Failed to fetch article content" }, { status: 500 });
+        const fetchResult = await fetchArticle(url);
+
+        if (!fetchResult.success) {
+            return NextResponse.json({
+                error: "Failed to fetch article content",
+                details: fetchResult.error
+            }, { status: 422 }); // 422 Unprocessable Entity
         }
+
+        const article = fetchResult.data;
 
         // LAYER 2: Hash Check
         const hashCheck = await checkDuplicate(cleanUrl, article.textContent, '');
