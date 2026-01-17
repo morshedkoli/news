@@ -18,6 +18,8 @@ export async function fetchArticle(url: string): Promise<ArticleData | null> {
         const { Readability } = await import("@mozilla/readability");
 
         const response = await fetch(url, {
+            // Safety: 15s timeout to prevent hanging serverless functions
+            signal: AbortSignal.timeout(15000),
             headers: {
                 "User-Agent":
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
