@@ -152,12 +152,14 @@ export async function POST(req: Request) {
             }
 
         } catch (aiError) {
-            console.error("AI Generation failed:", aiError);
-            return NextResponse.json({
-                error: (aiError as Error).message || "AI summarization failed",
-                details: "Please check AI Provider status in admin panel.",
-                article // Return article anyway
-            }, { status: 503 });
+            console.warn("AI Generation failed completely. Fallback to excerpt.", aiError);
+            // FAIL-SAFE: If ALL AI fails, just return the raw article excerpt.
+            // Do not break the flow.
+            generated = {
+                title: article.title,
+                summary: article.excerpt || article.textContent.substring(0, 500) + "..."
+            };
+            aiKey = { providerUsed: 'Fallback', modelUsed: 'None' };
         }
 
         return NextResponse.json({
