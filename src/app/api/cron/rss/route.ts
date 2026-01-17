@@ -183,7 +183,15 @@ export async function GET(req: NextRequest) {
                 }
 
                 // Fetch Body
-                const article = await fetchArticle(item.link);
+                const fetchResult = await fetchArticle(item.link);
+
+                if (!fetchResult.success) {
+                    console.log(`Fetch Failed for ${item.link}: ${fetchResult.error}`);
+                    continue;
+                }
+
+                const article = fetchResult.data;
+
                 if (!article?.textContent || article.textContent.length < 200) continue;
 
                 // Summarize
