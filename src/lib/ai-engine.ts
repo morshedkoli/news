@@ -152,8 +152,8 @@ async function callProviderTemplate(
         bodyStr = bodyStr
             .replace(/{{API_KEY}}/g, p.apiKey || '')
             .replace(/{{MODEL}}/g, p.model)
-            .replace(/{{SYSTEM_PROMPT}}/g, sys.replace(/\n/g, "\\n").replace(/"/g, '\\"'))
-            .replace(/{{USER_PROMPT}}/g, prompt.replace(/\n/g, "\\n").replace(/"/g, '\\"'));
+            .replace(/{{SYSTEM_PROMPT}}/g, JSON.stringify(sys).slice(1, -1))
+            .replace(/{{USER_PROMPT}}/g, JSON.stringify(prompt).slice(1, -1));
 
         body = bodyStr; // It's a string now, ready for sending
     }

@@ -21,6 +21,24 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
     try {
+        // Security: Verify Admin Token
+        const { headers } = require('next/headers');
+        const authHeader = headers().get('authorization');
+        if (!authHeader?.startsWith('Bearer ')) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+        const token = authHeader.split('Bearer ')[1];
+
+        // Dynamic import to avoid circular dep if any? No, just import standard.
+        // But we need authAdmin which is in lib/firebase-admin
+        const { authAdmin, dbAdmin } = require('@/lib/firebase-admin');
+
+        const decodedToken = await authAdmin.verifyIdToken(token);
+        const adminDoc = await dbAdmin.collection('admins').doc(decodedToken.email || '').get();
+        if (!adminDoc.exists) {
+            return NextResponse.json({ error: 'Forbidden: Not an admin' }, { status: 403 });
+        }
+
         const body = await req.json();
 
         // Basic validation

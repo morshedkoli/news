@@ -17,7 +17,7 @@ import {
     where,
 } from "firebase/firestore";
 import { format } from "date-fns";
-import { Edit, Eye, EyeOff, Loader2, Trash2, Search, ChevronLeft, ChevronRight, ThumbsUp } from "lucide-react";
+import { Edit, Eye, EyeOff, Loader2, Trash2, Search, ChevronLeft, ChevronRight, ThumbsUp, FileText } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -166,7 +166,12 @@ export default function NewsListPage() {
                                                         </div>
                                                         <div className="text-xs text-slate-500">
                                                             {item.published_at
-                                                                ? format(item.published_at.toDate(), "MMM d, yyyy • h:mm a")
+                                                                ? format(
+                                                                    (typeof item.published_at.toDate === 'function')
+                                                                        ? item.published_at.toDate()
+                                                                        : new Date(item.published_at),
+                                                                    "MMM d, yyyy • h:mm a"
+                                                                )
                                                                 : "Not published yet"}
                                                         </div>
                                                     </div>
@@ -180,8 +185,8 @@ export default function NewsListPage() {
                                             <td className="px-6 py-4">
                                                 <span
                                                     className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${isPublished
-                                                            ? "bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20"
-                                                            : "bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-600/20"
+                                                        ? "bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20"
+                                                        : "bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-600/20"
                                                         }`}
                                                 >
                                                     <span className={`h-1.5 w-1.5 rounded-full ${isPublished ? "bg-emerald-600" : "bg-amber-600"}`}></span>
@@ -199,13 +204,20 @@ export default function NewsListPage() {
                                                     <button
                                                         onClick={() => handleTogglePublish(item.id, isPublished)}
                                                         className={`rounded p-1.5 transition-colors ${isPublished
-                                                                ? "text-slate-500 hover:bg-slate-100 hover:text-amber-600"
-                                                                : "text-slate-500 hover:bg-slate-100 hover:text-emerald-600"
+                                                            ? "text-slate-500 hover:bg-slate-100 hover:text-amber-600"
+                                                            : "text-slate-500 hover:bg-slate-100 hover:text-emerald-600"
                                                             }`}
                                                         title={isPublished ? "Unpublish" : "Publish"}
                                                     >
                                                         {isPublished ? <EyeOff size={18} /> : <Eye size={18} />}
                                                     </button>
+                                                    <Link
+                                                        href={`/news/${item.id}`}
+                                                        className="rounded p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-blue-600"
+                                                        title="View Details"
+                                                    >
+                                                        <FileText size={18} />
+                                                    </Link>
                                                     <Link
                                                         href={`/news/edit/${item.id}`}
                                                         className="rounded p-1.5 text-slate-500 transition-colors hover:bg-indigo-50 hover:text-indigo-600"
@@ -255,6 +267,6 @@ export default function NewsListPage() {
                     </div>
                 )}
             </div>
-        </div>
+        </div >
     );
 }

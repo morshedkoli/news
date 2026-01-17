@@ -86,3 +86,40 @@ export async function isDuplicateArticle(url: string): Promise<boolean> {
 
     return !snapshot.empty;
 }
+
+export function calculateNextRun(startTimeStr: string, intervalMinutes: number, lastRun: Date | null): Date {
+    const now = new Date();
+    const [startHour, startMinute] = startTimeStr.split(':').map(Number);
+
+    // Create start time for today
+    let nextRun = new Date(now);
+    nextRun.setHours(startHour, startMinute, 0, 0);
+
+    // If start time is in the past, add intervals until it's in the future
+    // OR if we have a last run, project forward from there
+
+    if (lastRun) {
+        nextRun = new Date(lastRun.getTime() + intervalMinutes * 60000);
+        // Catch up if falling behind, but don't go too far into future? 
+        // Actually, strictly `lastRun + interval` is better for regularity, 
+        // but if the system was down for days, we don't want to run 100 times instantly.
+        // So: `Math.max(lastRun + interval, now)` is often safer for news, 
+        // BUT strict interval is better for "Every 6 hours".
+
+        // Strategy: If next scheduled run is in past, set it to NOW (catch up immediately)
+        if (nextRun < now) {
+            nextRun = now;
+        }
+    } else {
+        // First run
+        // If scheduled start time was earlier today, run NOW.
+        // If scheduled start time is later today, run THEN.
+        if (nextRun < now) {
+            // It's 10:00, Start was 09:00. 
+            // Should we run now? Yes.
+            nextRun = now;
+        }
+    }
+
+    return nextRun;
+}
