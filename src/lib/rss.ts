@@ -1,5 +1,4 @@
-import { db } from "@/lib/firebase";
-import { collection, query, where, getDocs, limit } from "firebase/firestore";
+import { dbAdmin } from "@/lib/firebase-admin";
 import { XMLParser } from "fast-xml-parser";
 
 interface RssItem {
@@ -78,13 +77,20 @@ export function normalizeUrl(url: string): string {
     }
 }
 
+// ... (keep earlier code)
+
 export async function isDuplicateArticle(url: string): Promise<boolean> {
     const cleanUrl = normalizeUrl(url);
-    const newsRef = collection(db, "news");
-    const q = query(newsRef, where("source_url", "==", cleanUrl), limit(1));
-    const snapshot = await getDocs(q);
-
-    return !snapshot.empty;
+    try {
+        const snapshot = await dbAdmin.collection("news")
+            .where("source_url", "==", cleanUrl)
+            .limit(1)
+            .get();
+        return !snapshot.empty;
+    } catch (e) {
+        console.error("Duplicate Check Error:", e);
+        return false; // Fail safe
+    }
 }
 
 export function calculateNextRun(startTimeStr: string, intervalMinutes: number, lastRun: Date | null): Date {
