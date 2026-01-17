@@ -95,8 +95,16 @@ export async function POST(req: Request) {
 
             if (aiKey && aiKey.content) {
                 try {
-                    // Try to parse JSON output
-                    const clean = aiKey.content.replace(/```json/g, "").replace(/```/g, "").trim();
+                    // Robust JSON extraction
+                    let clean = aiKey.content.replace(/```json/g, "").replace(/```/g, "").trim();
+
+                    // Find first '{' and last '}' to handle potential prelude/postscript text
+                    const firstOpen = clean.indexOf('{');
+                    const lastClose = clean.lastIndexOf('}');
+                    if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
+                        clean = clean.substring(firstOpen, lastClose + 1);
+                    }
+
                     generated = JSON.parse(clean);
 
                     // LAYER 3: Semantic Check
@@ -112,7 +120,7 @@ export async function POST(req: Request) {
                         }
                     }
                 } catch (e) {
-                    console.error("Failed to parse AI JSON:", e);
+                    console.warn("Soft Fail: JSON Parse Error, falling back to raw text.", e);
                     // Fallback to raw text if JSON fails but content exists
                     generated = { title: article.title, summary: aiKey.content };
                 }
