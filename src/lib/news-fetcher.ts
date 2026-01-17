@@ -13,9 +13,9 @@ export interface ArticleData {
 
 export async function fetchArticle(url: string): Promise<ArticleData | null> {
     try {
-        // Dynamic Import to prevent serverless crash on module load
-        const { JSDOM } = require("jsdom");
-        const { Readability } = require("@mozilla/readability");
+        // Dynamic Import to prevent serverless crash on module load and ensure bundling
+        const { JSDOM } = await import("jsdom");
+        const { Readability } = await import("@mozilla/readability");
 
         const response = await fetch(url, {
             headers: {

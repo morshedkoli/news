@@ -5,6 +5,9 @@ import { normalizeUrl, checkDuplicate, generateContentHash } from '@/lib/news-de
 import { dbAdmin } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 
+export const runtime = 'nodejs';
+export const maxDuration = 60; // Allow 60s for fetching/AI
+
 const SYSTEM_PROMPT = `You are a professional Bangla news editor.
 Rules:
 - Write in Bangla only
