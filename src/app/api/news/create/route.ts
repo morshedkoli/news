@@ -33,7 +33,7 @@ export async function POST(req: Request) {
 
         // 2. Validate Payload
         const body = await req.json();
-        const { title, summary, image, source_url, source_name, created_by } = body;
+        const { title, summary, image, source_url, source_name, created_by, category } = body;
 
         if (!title || !summary || !source_url) {
             return NextResponse.json({ error: "Missing required fields (title, summary, source_url)" }, { status: 400 });
@@ -57,6 +57,7 @@ export async function POST(req: Request) {
             content_hash,           // Useful for content dedup
             source_name: source_name || "Unknown",
             created_by: created_by || decodedToken.email,
+            category: category || "general",
             likes: 0,
             published_at: FieldValue.serverTimestamp(),
             created_at: FieldValue.serverTimestamp(),

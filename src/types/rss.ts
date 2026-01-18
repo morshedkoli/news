@@ -5,6 +5,7 @@ export interface RssFeed {
     name: string;
     url: string;
     enabled: boolean;
+    category?: string; // Category for news generated from this feed
     start_time: string; // "HH:mm"
     interval_minutes: number;
     safety_delay_minutes: number;

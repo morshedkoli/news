@@ -230,7 +230,7 @@ export async function GET(req: NextRequest) {
                     source_name: article.siteName || new URL(item.link).hostname,
                     published_at: new Date().toISOString(),
                     created_at: new Date().toISOString(),
-                    category: "general",
+                    category: feed.category || "general",
                     is_rss: true,
                     importance_score: scoreData.score
                 });

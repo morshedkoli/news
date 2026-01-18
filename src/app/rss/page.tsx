@@ -25,6 +25,7 @@ interface RssFeed {
     name: string;
     url: string;
     enabled: boolean;
+    category?: string;
     start_time: string;
     interval_minutes: number;
     safety_delay_minutes: number;
@@ -47,6 +48,7 @@ export default function RssPage() {
     const [formData, setFormData] = useState({
         name: "",
         url: "",
+        category: "general",
         start_time: "09:00",
         interval_minutes: 60,
         safety_delay_minutes: 5,
@@ -124,6 +126,7 @@ export default function RssPage() {
         setFormData({
             name: "",
             url: "",
+            category: "general",
             start_time: "09:00",
             interval_minutes: 60,
             safety_delay_minutes: 5,
@@ -297,7 +300,19 @@ export default function RssPage() {
                                     <p className="text-sm text-slate-500 truncate max-w-md" title={feed.url}>{feed.url}</p>
                                 </div>
                                 <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <button onClick={() => { setFormData({ ...feed }); setEditId(feed.id); setIsEditing(true); }} className="p-2 text-slate-400 hover:text-indigo-600">
+                                    <button onClick={() => {
+                                        setFormData({
+                                            name: feed.name,
+                                            url: feed.url,
+                                            category: feed.category || "general",
+                                            start_time: feed.start_time,
+                                            interval_minutes: feed.interval_minutes,
+                                            safety_delay_minutes: feed.safety_delay_minutes,
+                                            enabled: feed.enabled
+                                        });
+                                        setEditId(feed.id);
+                                        setIsEditing(true);
+                                    }} className="p-2 text-slate-400 hover:text-indigo-600">
                                         Edit
                                     </button>
                                     <button onClick={() => handleDelete(feed.id)} className="p-2 text-slate-400 hover:text-red-600">
@@ -306,7 +321,13 @@ export default function RssPage() {
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+                            <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 text-sm">
+                                <div className="space-y-1">
+                                    <p className="text-xs font-bold text-slate-400 uppercase">Category</p>
+                                    <p className="font-medium text-indigo-600 capitalize">
+                                        {feed.category || 'general'}
+                                    </p>
+                                </div>
                                 <div className="space-y-1">
                                     <p className="text-xs font-bold text-slate-400 uppercase">Schedule</p>
                                     <p className="font-medium text-slate-700 flex items-center gap-1">
@@ -393,6 +414,26 @@ export default function RssPage() {
                                         onChange={e => setFormData({ ...formData, url: e.target.value })}
                                     />
                                 </div>
+                            </div>
+
+                            <div>
+                                <label className="label">Category</label>
+                                <select
+                                    className="input-field"
+                                    value={formData.category}
+                                    onChange={e => setFormData({ ...formData, category: e.target.value })}
+                                >
+                                    <option value="general">General</option>
+                                    <option value="sports">Sports</option>
+                                    <option value="politics">Politics</option>
+                                    <option value="technology">Technology</option>
+                                    <option value="entertainment">Entertainment</option>
+                                    <option value="business">Business</option>
+                                    <option value="health">Health</option>
+                                    <option value="science">Science</option>
+                                    <option value="education">Education</option>
+                                    <option value="international">International</option>
+                                </select>
                             </div>
 
                             <div className="grid grid-cols-2 gap-4">
