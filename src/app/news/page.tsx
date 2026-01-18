@@ -42,7 +42,7 @@ export default function NewsListPage() {
     // If scaling up, we would use cursor pagination.
 
     useEffect(() => {
-        const q = query(collection(db, "news"), orderBy("published_at", "desc"), limit(100));
+        const q = query(collection(db, "news"), orderBy("created_at", "desc"), limit(100));
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const newsData = snapshot.docs.map((doc) => ({
                 id: doc.id,
