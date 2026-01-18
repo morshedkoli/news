@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { db } from "@/lib/firebase";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { db } from "@/lib/firebase"; // Keep auth/db init if needed elsewhere but specific firestore functions are removed from here
+// import { collection, addDoc, serverTimestamp } from "firebase/firestore"; // Removed unused imports
 import { Loader2, Save, Send, Link as LinkIcon, AlertCircle } from "lucide-react";
 import Link from "next/link";
 import { useAuth } from "@/context/AuthContext";
@@ -145,34 +145,52 @@ export default function AddNewsPage() {
                 ? newsData.summary
                 : newsData.summary + disclaimer;
 
-            updateProgress(40, "Saving to Firestore...");
-            const docRef = await addDoc(collection(db, "news"), {
-                ...newsData,
-                summary: finalSummary,
-                published_at: serverTimestamp(),
-                likes: 0,
-                created_by: user?.email
+            updateProgress(30, "Connecting to secure server...");
+
+            // Get ID Token for Auth
+            if (!user) throw new Error("User not authenticated");
+            const token = await user.getIdToken();
+
+            updateProgress(50, "Saving & Sending Notification...");
+
+            // Call Server API
+            const response = await fetch("/api/news/create", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    title: newsData.title,
+                    summary: finalSummary,
+                    image: newsData.image,
+                    source_url: newsData.source_url,
+                    source_name: newsData.source_name,
+                    created_by: user.email
+                })
             });
 
-            updateProgress(70, "Sending Push Notification...");
-            try {
-                await fetch("/api/notifications/send", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        title: newsData.title,
-                        summary: finalSummary,
-                        newsId: docRef.id
-                    })
-                });
-            } catch (nErr) {
-                console.error("Notification failed", nErr);
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.error || "Failed to publish news");
             }
 
-            updateProgress(100, "Published Successfully!");
-            router.push("/");
+            if (result.notificationSent) {
+                updateProgress(100, "Published & Notified Successfully!");
+            } else {
+                // WARNING: Notification failed but news is saved.
+                alert("⚠️ খবর প্রকাশ হয়েছে, কিন্তু নোটিফিকেশন পাঠানো যায়নি (Push Failed)");
+                updateProgress(100, "Published (Notification Warning)");
+            }
+
+            setTimeout(() => {
+                router.push("/");
+            }, 1000);
+
         } catch (err: any) {
-            setError("Failed to publish news: " + err.message);
+            console.error("Publish Error:", err);
+            setError("Failed to publish: " + err.message);
             updateProgress(0, "");
         } finally {
             setPublishing(false);

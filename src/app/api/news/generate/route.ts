@@ -179,6 +179,15 @@ export async function POST(req: Request) {
 
     } catch (error: any) {
         console.error("API Error:", error);
+
+        // Handle Firestore "value too large" error specifically
+        if (error.code === 3 || error.message?.includes("too large") || error.code === 'INVALID_ARGUMENT') {
+            return NextResponse.json({
+                error: "এই লিংকের খবরটি প্রক্রিয়াকরণ করা যাচ্ছে না (URL too long)",
+                details: "The URL is too long for the database index."
+            }, { status: 400 });
+        }
+
         return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
     }
 }

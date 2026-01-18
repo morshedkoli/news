@@ -89,16 +89,29 @@ function calculateSimilarity(textA: string, textB: string): number {
 /**
  * Main Driver: Check for Duplicates
  */
+/**
+ * Generate SHA-256 hash of a URL for safe Firestore querying.
+ */
+export function generateUrlHash(url: string): string {
+    if (!url) return '';
+    return createHash('sha256').update(url).digest('hex');
+}
+
+/**
+ * Main Driver: Check for Duplicates
+ */
 export async function checkDuplicate(
     url: string,
     rawContent: string,
     generatedSummary: string = ''
 ): Promise<DuplicateResult> {
     const normUrl = normalizeUrl(url);
+    const normUrlHash = generateUrlHash(normUrl);
     const contentHash = generateContentHash(rawContent);
 
+    // 1. Check Normalized URL Hash
     const urlCheck = await dbAdmin.collection('news')
-        .where('normalized_url', '==', normUrl)
+        .where('normalized_url_hash', '==', normUrlHash)
         .limit(1)
         .get();
 
@@ -106,27 +119,13 @@ export async function checkDuplicate(
         return { isDuplicate: true, type: 'exact', originalId: urlCheck.docs[0].id, confidence: 1.0 };
     }
 
-    // 1b. Fallback: Check 'source_url' (for legacy items or non-normalized saves)
-    // We check both the raw URL and the normalized URL against source_url
-    const sourceCheckRaw = await dbAdmin.collection('news')
-        .where('source_url', '==', url)
-        .limit(1)
-        .get();
-
-    if (!sourceCheckRaw.empty) {
-        return { isDuplicate: true, type: 'exact', originalId: sourceCheckRaw.docs[0].id, confidence: 1.0 };
-    }
-
-    // Also check if the 'normalized' version exists in source_url (in case it was saved clean)
-    if (url !== normUrl) {
-        const sourceCheckNorm = await dbAdmin.collection('news')
-            .where('source_url', '==', normUrl)
-            .limit(1)
-            .get();
-        if (!sourceCheckNorm.empty) {
-            return { isDuplicate: true, type: 'exact', originalId: sourceCheckNorm.docs[0].id, confidence: 1.0 };
-        }
-    }
+    // 1b. Falback: Check source_url using hash (if you decide to store source_url_hash)
+    // or if we must stick to the User's rule "STOP querying Firestore using full URLs", 
+    // we cannot safely check source_url if it's long. 
+    // However, the User mentioned "Store ONLY the hash for dedup queries".
+    // I'll calculate source_url hash too just in case we start saving it, 
+    // but without migration, existing docs won't have it.
+    // Given "Do NOT re-query by raw URL", we skip raw source_url check to prevent crash.
 
     // 2. Check Content Hash (Exact Body Match)
     // Note: Requires composite index if querying with other fields, but okay for single field check

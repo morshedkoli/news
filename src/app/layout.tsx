@@ -19,12 +19,9 @@ const hindSiliguri = Hind_Siliguri({
 });
 
 export const metadata: Metadata = {
-  title: "NewsByte BD - Admin Panel",
+  title: "NewsByte - Admin Panel",
   description: "Bangla AI-driven news aggregation system.",
-  icons: {
-    icon: '/icon',
-    apple: '/icon',
-  }
+
 };
 
 export default function RootLayout({
