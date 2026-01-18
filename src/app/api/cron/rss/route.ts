@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dbAdmin } from "@/lib/firebase-admin";
-import { parseRssFeed, calculateNextRun } from "@/lib/rss"; // Added helper
+import { parseRssFeed, calculateNextRun } from "@/lib/rss";
 import { fetchArticle } from "@/lib/news-fetcher";
 import { generateContent, getActiveProviders } from "@/lib/ai-engine";
-import { normalizeUrl, checkDuplicate, generateContentHash } from '@/lib/news-dedup';
+import { normalizeUrl, checkDuplicate, generateContentHash, generateUrlHash } from '@/lib/news-dedup';
+import { sendNotification } from "@/lib/notifications";
 import { NewsArticle } from '@/types/news';
 import { RssFeed, RssSettings } from '@/types/rss'; // Added types
 import { calculateImportanceScore } from "@/lib/news-scorer";
@@ -216,12 +217,15 @@ export async function GET(req: NextRequest) {
                 // Publish
                 const scoreData = calculateImportanceScore(summaryData.title, summaryData.summary, cleanUrl, new Date());
 
-                await dbAdmin.collection("news").add({
+                const normalized_url_hash = generateUrlHash(cleanUrl);
+
+                const docRef = await dbAdmin.collection("news").add({
                     title: summaryData.title,
                     summary: summaryData.summary + "\n\n(AI সংক্ষেপিত)",
                     image: article.image || "",
                     source_url: item.link,
                     normalized_url: cleanUrl,
+                    normalized_url_hash, // MANDATORY for dedup
                     content_hash: generateContentHash(article.textContent),
                     source_name: article.siteName || new URL(item.link).hostname,
                     published_at: new Date().toISOString(),
@@ -230,6 +234,14 @@ export async function GET(req: NextRequest) {
                     is_rss: true,
                     importance_score: scoreData.score
                 });
+
+                // Trigger Notification
+                try {
+                    console.log(`Sending notification for RSS item: ${docRef.id}`);
+                    await sendNotification(summaryData.title, summaryData.summary, docRef.id);
+                } catch (notifyErr) {
+                    console.error(`Failed to notify for RSS item ${docRef.id}:`, notifyErr);
+                }
 
                 processedCount++;
             }
