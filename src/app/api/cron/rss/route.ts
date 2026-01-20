@@ -1,26 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dbAdmin } from "@/lib/firebase-admin";
-import { parseRssFeed, calculateNextRun } from "@/lib/rss";
+import { parseRssFeed } from "@/lib/rss";
 import { fetchArticle } from "@/lib/news-fetcher";
-import { generateContent, getActiveProviders } from "@/lib/ai-engine";
-import { normalizeUrl, checkDuplicate, generateContentHash, generateUrlHash } from '@/lib/news-dedup';
+import { generateContent } from "@/lib/ai-engine";
+import { normalizeUrl, generateContentHash, generateUrlHash } from '@/lib/news-dedup';
 import { sendNotification } from "@/lib/notifications";
-import { NewsArticle } from '@/types/news';
-import { RssFeed, RssSettings } from '@/types/rss'; // Added types
+import { RssFeed, RssSettings } from '@/types/rss';
 import { calculateImportanceScore } from "@/lib/news-scorer";
-import { Timestamp, FieldValue } from "firebase-admin/firestore";
+import { Timestamp } from "firebase-admin/firestore";
 
-// Allow execution to finish one feed (Vercel max is usually 10-60s on hobby, we target 30s)
-// Allow execution to finish one feed (Vercel max is usually 10-60s on hobby, we target 30s)
-export const maxDuration = 60;
+// Cron configuration
+export const maxDuration = 60; // 60 seconds max duration
 export const revalidate = 0;
 export const runtime = 'nodejs';
 
-const HELP_ALERTS_COLLECTION = "system_alerts";
-const SETTINGS_DOC_REF = dbAdmin.collection("system_stats").doc("rss_settings");
-const PROGRESS_DOC_REF = dbAdmin.collection('system_stats').doc('rss_progress');
+// System constants
+const SETTINGS_DOC = "rss_settings";
+const GLOBAL_INTERVAL_MINUTES = 30; // Global posting interval
+const FEED_COOLDOWN_MINUTES = 30; // Per-feed cooldown after success
 
-const SYSTEM_PROMPT = `You are a professional Bangla news editor.
+const SYSTEM_PROMPT_BANGLA = `You are a professional Bangla news editor.
 Rules:
 - Write in Bangla only
 - Neutral journalistic tone
@@ -36,276 +35,401 @@ Output format JSON ONLY:
   "summary": "Bangla Summary..."
 }`;
 
-// Helper to update live progress for Admin UI
-async function updateProgress(data: any) {
-    try {
-        await PROGRESS_DOC_REF.set({
-            ...data,
-            last_updated: FieldValue.serverTimestamp()
-        }, { merge: true });
-    } catch (e) {
-        console.error("Failed to update progress:", e);
-    }
-}
+const SYSTEM_PROMPT_ENGLISH = `You are a professional news translator and editor.
+Rules:
+- TRANSLATE the English news to Bangla
+- Maintain neutral journalistic tone
+- No opinions, no analysis, no emotion
+- No clickbait
+- Do NOT add new facts or guess missing info
+- Use short paragraphs (max 6 paragraphs, max 2 lines each)
+- Max 120 words total
+- Translate names and places appropriately (e.g., "Bangladesh" → "বাংলাদেশ")
 
-async function logSystemEvent(message: string, type: 'info' | 'error' | 'success' | 'warn') {
-    console.log(`[RSS-CRON] [${type.toUpperCase()}] ${message}`);
-    const emoji = type === 'error' ? '❌' : type === 'success' ? '✅' : type === 'warn' ? '⚠️' : 'ℹ️';
-    await updateProgress({
-        logs: FieldValue.arrayUnion(`${emoji} ${message}`)
-    });
-}
+Output format JSON ONLY:
+{
+  "title": "Translated Bangla Title",
+  "summary": "Translated Bangla Summary..."
+}`;
 
+/**
+ * RSS Auto-Posting Cron Endpoint
+ * 
+ * Triggered by cron-job.org every 30 minutes
+ * Posts one news article from enabled RSS feeds
+ * Sends push notification for each post
+ */
 export async function GET(req: NextRequest) {
-    const executionStart = Date.now();
+    const start = Date.now();
 
-    // --- HYBRID CRON STRATEGY DOCUMENTATION ---
-    // Vercel Hobby Plan allows internal cron jobs only once per day.
-    // This endpoint is designed to be called by EXTERNAL cron services (e.g., cron-job.org)
-    // for frequent execution (e.g., every 10 minutes).
-    // The daily Vercel cron serves as a fallback safety trigger.
-    // ------------------------------------------
-
-    const source = req.headers.get('x-vercel-cron') ? 'Vercel Cron' : 'External/Manual';
-    console.log(`⏰ Master Cron Waking Up... Source: ${source}`);
+    // 1. SECURITY CHECK
+    const authorized = checkSecurity(req);
+    if (!authorized) {
+        console.warn("🚫 Unauthorized cron attempt");
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     try {
-        // 1. Load Settings
-        const settingsDoc = await SETTINGS_DOC_REF.get();
-        const settings = (settingsDoc.data() || {
-            master_interval_minutes: 5,
-            global_safety_delay_minutes: 5,
-            require_ai_online: true,
-            max_feeds_per_cycle: 1, // Default to 1 for safety
-            global_lock_until: null,
-            global_cooldown_until: null
-        }) as RssSettings;
+        console.log("⏰ RSS Cron Triggered at", new Date().toISOString());
 
-        // 2. Cooldown Check
-        const now = Timestamp.now();
-        if (settings.global_cooldown_until && settings.global_cooldown_until.toMillis() > now.toMillis()) {
-            const cooldownLeft = Math.ceil((settings.global_cooldown_until.toMillis() - now.toMillis()) / 1000 / 60);
-            await logSystemEvent(`System in Cooldown. Resuming in ${cooldownLeft} mins.`, 'info');
-            await updateProgress({ status: 'waiting', cooldown_until: settings.global_cooldown_until });
-            return NextResponse.json({ message: "Cooldown active", next_check: settings.global_cooldown_until.toDate() });
+        // 2. GLOBAL RATE LIMIT CHECK (30-minute interval)
+        const settingsRef = dbAdmin.collection("system_stats").doc(SETTINGS_DOC);
+        const settingsSnap = await settingsRef.get();
+        const settings = (settingsSnap.data() as RssSettings) || {};
+
+        // Check if we need to reset daily stats
+        const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+        if (settings.last_reset_date !== today) {
+            await settingsRef.set({
+                total_posts_today: 0,
+                last_reset_date: today
+            }, { merge: true });
+            settings.total_posts_today = 0;
         }
 
-        // 3. Lock Check (Crash Recovery)
-        if (settings.global_lock_until && settings.global_lock_until.toMillis() > now.toMillis()) {
-            // Lock is active. Is it stale?
-            const lockTime = settings.global_lock_until.toDate();
-            // If lock is > 10 mins in future (shouldn't happen) or just valid, we wait.
-            // Actually, we trust the lock.
-            await logSystemEvent(`System Locked. Another feed is running.`, 'warn');
-            await updateProgress({ status: 'running' });
-            return NextResponse.json({ message: "System Locked", locked_until: lockTime });
-        }
+        // Check global cooldown
+        if (settings.last_news_posted_at) {
+            const lastPostTime = settings.last_news_posted_at.toDate();
+            const diffMinutes = (Date.now() - lastPostTime.getTime()) / (1000 * 60);
 
-        // 4. AI Check
-        if (settings.require_ai_online) {
-            const providers = await getActiveProviders();
-            if (providers.length === 0) {
-                await logSystemEvent(`AI Offline. Skipping run.`, 'error');
-                await updateProgress({ status: 'error' });
-                return NextResponse.json({ message: "AI Offline" }, { status: 503 });
+            if (diffMinutes < GLOBAL_INTERVAL_MINUTES) {
+                const remaining = Math.ceil(GLOBAL_INTERVAL_MINUTES - diffMinutes);
+                console.log(`⏸️ Global Cooldown Active. Last post: ${diffMinutes.toFixed(1)} mins ago. Wait ${remaining} mins.`);
+                return NextResponse.json({
+                    status: "skipped",
+                    reason: "global_cooldown",
+                    minutes_remaining: remaining,
+                    last_posted_at: lastPostTime.toISOString()
+                });
             }
         }
 
-        // 5. Fetch Candidate Feeds
-        // Logic: Enabled = true AND next_run_at <= Now (or null) AND status = 'idle' (or stale running)
-        // Note: Firestore doesn't support OR queries well in this context, so we fetch standard candidates.
-
+        // 3. FETCH ENABLED FEEDS
         const feedsSnap = await dbAdmin.collection("rss_feeds")
             .where("enabled", "==", true)
-            .where("status", "==", "idle") // Only pick idle ones
-            .where("next_run_at", "<=", now)
-            .orderBy("next_run_at", "asc")
-            .limit(1) // STRICTLY ONE at a time per Master Cron Cycle
             .get();
 
         if (feedsSnap.empty) {
-            // Check if we have any "stale" running feeds (crashed?)
-            // TODO: Add stale check logic if needed.
-            await updateProgress({ status: 'idle', message: 'No feeds due.' });
-            return NextResponse.json({ message: "No feeds due." });
-        }
-
-        const feedDoc = feedsSnap.docs[0];
-        const feed = { id: feedDoc.id, ...feedDoc.data() } as RssFeed;
-
-        await logSystemEvent(`Selected Feed: ${feed.url}`, 'info');
-
-        // 6. ACQUIRE LOCK & SET RUNNING
-        const lockDurationMinutes = 5;
-        const lockUntil = Timestamp.fromMillis(Date.now() + lockDurationMinutes * 60 * 1000);
-
-        // Transaction or Batch to ensure atomicity? 
-        // For simplicity in this v1 architecture, we just write. Race conditions are rare with 1 worker pattern.
-        await SETTINGS_DOC_REF.update({
-            global_lock_until: lockUntil
-        });
-
-        await dbAdmin.collection("rss_feeds").doc(feed.id).update({
-            status: 'running',
-            last_run_at: now
-        });
-
-        await updateProgress({
-            status: 'running',
-            current_feed_url: feed.url,
-            current_feed_id: feed.id
-        });
-
-        // 7. PROCESS FEED
-        let executionSuccess = false;
-        let processedCount = 0;
-
-        try {
-            const items = await parseRssFeed(feed.url);
-            const topItems = items.slice(0, 3); // Max 3 items per run to stay fast
-
-            for (const item of topItems) {
-                // Timeout Safety: Stop if running longer than 45s (leaving 15s for cleanup)
-                if (Date.now() - executionStart > 45000) {
-                    console.warn("⚠️ Cron approaching timeout. Stopping loop to cleanup.");
-                    await logSystemEvent("Timeout approaching. Stopping cycle early.", 'warn');
-                    break;
-                }
-                // --- FEED PROCESSING LOGIC (Copied & Optimized from old cron) ---
-                const cleanUrl = normalizeUrl(item.link);
-
-                // Check Status & Lock again inside loop? No, too expensive.
-
-                // Dedupe
-                const urlCheck = await checkDuplicate(cleanUrl, '', '');
-                if (urlCheck.isDuplicate) {
-                    console.log(`Skipping Duplicate: ${cleanUrl}`);
-                    continue;
-                }
-
-                // Fetch Body
-                const fetchResult = await fetchArticle(item.link);
-
-                if (!fetchResult.success) {
-                    console.log(`Fetch Failed for ${item.link}: ${fetchResult.error}`);
-                    continue;
-                }
-
-                const article = fetchResult.data;
-
-                if (!article?.textContent || article.textContent.length < 200) continue;
-
-                // Summarize
-                const textChunk = article.textContent.slice(0, 8000);
-                const userPrompt = `নিচের সংবাদটি সংক্ষেপে উপস্থাপন করুন। মূল তথ্য ঠিক রাখুন। কোনো মতামত দেবেন না।\n\nসংবাদ:\n${textChunk}`;
-
-                const aiRes = await generateContent(userPrompt, {
-                    systemPrompt: SYSTEM_PROMPT,
-                    temperature: 0.2,
-                    jsonMode: true
-                });
-
-                if (!aiRes || !aiRes.content) throw new Error("AI Empty Response");
-
-                let summaryData: any = {};
-                try {
-                    summaryData = JSON.parse(aiRes.content.replace(/```json/g, "").replace(/```/g, "").trim());
-                } catch (e) { continue; }
-
-                if (!summaryData.title || !summaryData.summary) continue;
-
-                // Publish
-                const scoreData = calculateImportanceScore(summaryData.title, summaryData.summary, cleanUrl, new Date());
-
-                const normalized_url_hash = generateUrlHash(cleanUrl);
-
-                const docRef = await dbAdmin.collection("news").add({
-                    title: summaryData.title,
-                    summary: summaryData.summary + "\n\n(AI সংক্ষেপিত)",
-                    image: article.image || "",
-                    source_url: item.link,
-                    normalized_url: cleanUrl,
-                    normalized_url_hash, // MANDATORY for dedup
-                    content_hash: generateContentHash(article.textContent),
-                    source_name: article.siteName || new URL(item.link).hostname,
-                    published_at: new Date().toISOString(),
-                    created_at: new Date().toISOString(),
-                    category: feed.category || "general",
-                    is_rss: true,
-                    importance_score: scoreData.score
-                });
-
-                // Trigger Notification
-                try {
-                    console.log(`Sending notification for RSS item: ${docRef.id}`);
-                    await sendNotification(summaryData.title, summaryData.summary, docRef.id);
-                } catch (notifyErr) {
-                    console.error(`Failed to notify for RSS item ${docRef.id}:`, notifyErr);
-                }
-
-                processedCount++;
-            }
-
-            executionSuccess = true;
-            await logSystemEvent(`Processed ${processedCount} items from ${feed.name || feed.url}`, 'success');
-
-        } catch (error: any) {
-            console.error("Feed Execution Failed:", error);
-            await logSystemEvent(`Feed Failed: ${error.message}`, 'error');
-            await dbAdmin.collection("rss_feeds").doc(feed.id).update({
-                error_log: error.message
+            console.log("⚠️ No enabled feeds found");
+            return NextResponse.json({
+                status: "skipped",
+                reason: "no_feeds_enabled"
             });
         }
 
-        // 8. CLEANUP & SCHEDULE NEXT
-        const finishTime = new Date();
+        // 4. FILTER AND SORT FEEDS
+        let feeds = feedsSnap.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        } as RssFeed));
 
-        // Next Run Calculation
-        const nextRun = calculateNextRun(feed.start_time || "09:00", feed.interval_minutes || 60, finishTime);
-        const nextRunTs = Timestamp.fromDate(nextRun);
-
-        await dbAdmin.collection("rss_feeds").doc(feed.id).update({
-            status: 'idle',
-            last_run_at: Timestamp.fromDate(finishTime),
-            next_run_at: nextRunTs
+        // Filter out feeds in cooldown
+        const now = Date.now();
+        feeds = feeds.filter(f => {
+            if (!f.cooldown_until) return true;
+            const cooldownEnd = f.cooldown_until.toDate().getTime();
+            return cooldownEnd <= now;
         });
 
-        // 9. RELEASE LOCK & SET COOLDOWN
-        // Determine safety delay
-        const safetyDelay = feed.safety_delay_minutes || settings.global_safety_delay_minutes || 5;
-        const cooldownUntil = Timestamp.fromMillis(Date.now() + safetyDelay * 60 * 1000);
+        if (feeds.length === 0) {
+            console.log("⏸️ All feeds are in cooldown");
+            return NextResponse.json({
+                status: "skipped",
+                reason: "all_feeds_cooldown"
+            });
+        }
 
-        await SETTINGS_DOC_REF.update({
-            global_lock_until: null,
-            global_cooldown_until: cooldownUntil
+        // Sort: Priority DESC, then Last Checked ASC (oldest first)
+        feeds.sort((a, b) => {
+            const prioA = a.priority ?? 10;
+            const prioB = b.priority ?? 10;
+            if (prioA !== prioB) return prioB - prioA; // Higher priority first
+
+            const timeA = a.last_checked_at ? a.last_checked_at.toDate().getTime() : 0;
+            const timeB = b.last_checked_at ? b.last_checked_at.toDate().getTime() : 0;
+            return timeA - timeB; // Older check first
         });
 
-        await updateProgress({
-            status: 'waiting',
-            cooldown_until: cooldownUntil,
-            last_feed_count: processedCount
-        });
+        console.log(`📋 Processing ${feeds.length} eligible feeds`);
 
-        await logSystemEvent(`Cycle Complete. Cooling down for ${safetyDelay} mins.`, 'info');
+        // 5. FEED PROCESSING LOOP (Fallback Logic)
+        let posted = false;
+        let postedFeed: string | null = null;
+        let postedNewsId: string | null = null;
+        const attempts: string[] = [];
 
+        for (const feed of feeds) {
+            // Safety timeout check (leave 15s buffer)
+            if (Date.now() - start > 45000) {
+                console.warn("⚠️ Cron timeout approaching (45s). Exiting loop.");
+                break;
+            }
+
+            attempts.push(feed.name || feed.url);
+            console.log(`\n🔍 Checking Feed: ${feed.name} (${feed.url})`);
+
+            try {
+                // Parse RSS feed
+                const rssItems = await parseRssFeed(feed.url);
+
+                if (rssItems.length === 0) {
+                    console.log(`  ⚠️ Feed returned no items`);
+                    await updateFeedChecked(feed.id);
+                    continue;
+                }
+
+                console.log(`  📰 Found ${rssItems.length} items in feed`);
+
+                // Check top 5 items for new content
+                let foundNew = false;
+
+                for (const item of rssItems.slice(0, 5)) {
+                    const cleanUrl = normalizeUrl(item.link);
+
+                    // Deduplication Check 1: URL Hash (fast)
+                    const urlHash = generateUrlHash(cleanUrl);
+                    const existingByUrl = await dbAdmin.collection("news")
+                        .where("normalized_url_hash", "==", urlHash)
+                        .limit(1)
+                        .get();
+
+                    if (!existingByUrl.empty) {
+                        console.log(`  ⏭️ Duplicate URL: ${item.title.slice(0, 50)}...`);
+                        continue;
+                    }
+
+                    // Fetch article content
+                    console.log(`  📡 Fetching: ${item.title.slice(0, 50)}...`);
+                    const fetchResult = await fetchArticle(item.link);
+
+                    if (!fetchResult.success || !fetchResult.data?.textContent) {
+                        const errorMsg = !fetchResult.success ? fetchResult.error : 'No content';
+                        console.log(`  ❌ Fetch failed: ${errorMsg}`);
+                        continue;
+                    }
+
+                    const article = fetchResult.data;
+
+                    // Validate content length
+                    if (article.textContent.length < 200) {
+                        console.log(`  ⚠️ Content too short (${article.textContent.length} chars)`);
+                        continue;
+                    }
+
+                    // Deduplication Check 2: Content Hash
+                    const contentHash = generateContentHash(article.textContent);
+                    const existingByContent = await dbAdmin.collection("news")
+                        .where("content_hash", "==", contentHash)
+                        .limit(1)
+                        .get();
+
+                    if (!existingByContent.empty) {
+                        console.log(`  ⏭️ Duplicate Content: ${item.title.slice(0, 50)}...`);
+                        continue;
+                    }
+
+                    // === FOUND VALID NEW ARTICLE ===
+                    foundNew = true;
+                    console.log(`  ✅ Valid new article found!`);
+
+                    // Detect Language (simple heuristic: check for Bangla Unicode characters)
+                    const isBangla = /[ঀ-৿]/.test(article.textContent.slice(0, 500));
+                    const language = isBangla ? 'Bangla' : 'English';
+                    console.log(`  🌍 Language detected: ${language}`);
+
+                    // Select appropriate system prompt
+                    const systemPrompt = isBangla ? SYSTEM_PROMPT_BANGLA : SYSTEM_PROMPT_ENGLISH;
+                    const userPrompt = isBangla
+                        ? `News:\n${article.textContent.slice(0, 8000)}\n\nSummarize this in Bangla following system rules.`
+                        : `English News:\n${article.textContent.slice(0, 8000)}\n\nTranslate and summarize this English news to Bangla following system rules.`;
+
+                    // Generate AI Summary (or Translation + Summary for English)
+                    console.log(`  🤖 ${isBangla ? 'Generating' : 'Translating and generating'} AI summary...`);
+                    const aiRes = await generateContent(
+                        userPrompt,
+                        {
+                            systemPrompt: systemPrompt,
+                            temperature: 0.2,
+                            jsonMode: true
+                        }
+                    );
+
+                    if (!aiRes?.content) {
+                        throw new Error("AI generation failed");
+                    }
+
+                    // Parse AI response
+                    let contentJson: any = {};
+                    try {
+                        const cleanedContent = aiRes.content
+                            .replace(/```json/g, "")
+                            .replace(/```/g, "")
+                            .trim();
+                        contentJson = JSON.parse(cleanedContent);
+                    } catch (e) {
+                        throw new Error("Invalid JSON from AI");
+                    }
+
+                    if (!contentJson.title || !contentJson.summary) {
+                        throw new Error("Incomplete AI response (missing title or summary)");
+                    }
+
+                    console.log(`  📝 AI Title: ${contentJson.title.slice(0, 50)}...`);
+
+                    // Calculate importance score
+                    const scoreData = calculateImportanceScore(
+                        contentJson.title,
+                        contentJson.summary,
+                        cleanUrl,
+                        new Date()
+                    );
+
+                    // Determine category: Use auto-detected from article, fallback to feed category
+                    const finalCategory = article.category || feed.category || "সাধারণ";
+                    console.log(`  📂 Category: ${finalCategory}${article.category ? ' (auto-detected)' : ' (from feed)'}`);
+
+                    // Save to Firestore
+                    const newsRef = await dbAdmin.collection("news").add({
+                        title: contentJson.title,
+                        summary: contentJson.summary,
+                        image: article.image || "",
+                        source_url: item.link,
+                        normalized_url: cleanUrl,
+                        normalized_url_hash: urlHash,
+                        content_hash: contentHash,
+                        source_name: article.siteName || new URL(item.link).hostname,
+                        published_at: new Date().toISOString(),
+                        created_at: new Date().toISOString(),
+                        category: finalCategory,
+                        is_rss: true,
+                        importance_score: scoreData.score
+                    });
+
+                    console.log(`  💾 Saved to Firestore: ${newsRef.id}`);
+
+                    // Send Push Notification
+                    console.log(`  🔔 Sending push notification...`);
+                    const notifResult = await sendNotification(
+                        contentJson.title,
+                        contentJson.summary,
+                        newsRef.id
+                    );
+
+                    if (notifResult) {
+                        console.log(`  ✅ Notification sent successfully`);
+                    } else {
+                        console.log(`  ⚠️ Notification failed (non-blocking)`);
+                    }
+
+                    // Update Global Settings
+                    const newTotalToday = (settings.total_posts_today || 0) + 1;
+                    await settingsRef.set({
+                        last_news_posted_at: Timestamp.now(),
+                        total_posts_today: newTotalToday,
+                        last_reset_date: today
+                    }, { merge: true });
+
+                    // Update Feed State (Success + Cooldown)
+                    const cooldownTime = Timestamp.fromMillis(
+                        Date.now() + FEED_COOLDOWN_MINUTES * 60 * 1000
+                    );
+                    await dbAdmin.collection("rss_feeds").doc(feed.id).update({
+                        last_success_at: Timestamp.now(),
+                        last_checked_at: Timestamp.now(),
+                        cooldown_until: cooldownTime,
+                        failure_count: 0,
+                        error_log: ""
+                    });
+
+                    posted = true;
+                    postedFeed = feed.name || feed.url;
+                    postedNewsId = newsRef.id;
+
+                    console.log(`\n🎉 Successfully posted from: ${postedFeed}`);
+                    break; // Break item loop
+                }
+
+                if (posted) break; // Break feed loop
+
+                // If no new items found, update checked time
+                if (!foundNew) {
+                    console.log(`  ⚠️ No new items in this feed`);
+                    await updateFeedChecked(feed.id);
+                }
+
+            } catch (err) {
+                console.error(`❌ Error processing feed ${feed.name}:`, err);
+
+                // Update feed with error
+                const errorMsg = err instanceof Error ? err.message : String(err);
+                await dbAdmin.collection("rss_feeds").doc(feed.id).update({
+                    last_checked_at: Timestamp.now(),
+                    error_log: errorMsg,
+                    failure_count: (feed.failure_count || 0) + 1
+                });
+            }
+        }
+
+        // 6. RETURN RESULT
+        const duration = ((Date.now() - start) / 1000).toFixed(2);
+
+        if (posted) {
+            console.log(`\n✅ Cron completed in ${duration}s - Posted from ${postedFeed}`);
+            return NextResponse.json({
+                status: "posted",
+                feed: postedFeed,
+                newsId: postedNewsId,
+                duration_seconds: parseFloat(duration),
+                total_posts_today: (settings.total_posts_today || 0) + 1
+            });
+        } else {
+            console.log(`\n⚠️ Cron completed in ${duration}s - No news posted`);
+            return NextResponse.json({
+                status: "checked_all",
+                result: "no_new_articles",
+                attempts: attempts,
+                duration_seconds: parseFloat(duration)
+            });
+        }
+
+    } catch (error: any) {
+        console.error("💥 Cron Fatal Error:", error);
         return NextResponse.json({
-            success: true,
-            processed: processedCount,
-            feed: feed.url,
-            next_run: nextRun.toISOString()
-        });
-
-    } catch (criticalError: any) {
-        console.error("CRITICAL CRON FAILURE", criticalError);
-        // Emergency Unlock
-        try {
-            await SETTINGS_DOC_REF.update({ global_lock_until: null });
-        } catch (e) { console.error("Failed to unlock", e); }
-
-        return NextResponse.json({
-            error: "Critical Internal Error",
-            details: criticalError.message,
-            stack: criticalError.stack
+            error: error.message,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
         }, { status: 500 });
     }
+}
+
+/**
+ * Update feed's last_checked_at timestamp
+ */
+async function updateFeedChecked(feedId: string) {
+    await dbAdmin.collection("rss_feeds").doc(feedId).update({
+        last_checked_at: Timestamp.now()
+    });
+}
+
+/**
+ * Security check for cron endpoint
+ * Validates CRON_SECRET from query param or Bearer token
+ */
+function checkSecurity(req: NextRequest): boolean {
+    const secret = process.env.CRON_SECRET;
+
+    // If no secret configured, allow (development mode)
+    if (!secret) {
+        console.warn("⚠️ CRON_SECRET not set - allowing request (dev mode)");
+        return true;
+    }
+
+    // Check query parameter
+    const queryKey = req.nextUrl.searchParams.get('key');
+    if (queryKey === secret) return true;
+
+    // Check Authorization header
+    const authHeader = req.headers.get('authorization');
+    if (authHeader === `Bearer ${secret}`) return true;
+
+    return false;
 }

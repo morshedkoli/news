@@ -1,25 +1,31 @@
-export type RssFeedStatus = 'idle' | 'running' | 'error' | 'cooldown';
-
+// RSS Feed interface - Simplified for global 30-minute interval system
 export interface RssFeed {
     id: string;
     name: string;
     url: string;
     enabled: boolean;
-    category?: string; // Category for news generated from this feed
-    start_time: string; // "HH:mm"
-    interval_minutes: number;
-    safety_delay_minutes: number;
-    last_run_at: any; // Firestore Timestamp
-    next_run_at: any; // Firestore Timestamp
-    status: RssFeedStatus;
+    category?: string;
+    priority: number; // Higher number = higher priority (default 10)
+
+    // State Tracking
+    last_checked_at?: any; // Firestore Timestamp
+    last_success_at?: any; // Firestore Timestamp
+    cooldown_until?: any; // Firestore Timestamp (30 min after success)
+    failure_count?: number;
     error_log?: string;
 }
 
+// RSS Settings - Global state for 30-minute posting interval
 export interface RssSettings {
-    master_interval_minutes: number;
-    global_safety_delay_minutes: number;
-    require_ai_online: boolean;
-    max_feeds_per_cycle: number;
-    global_lock_until?: any; // Firestore Timestamp
-    global_cooldown_until?: any; // Firestore Timestamp
+    last_news_posted_at?: any; // Firestore Timestamp - Global 30-minute tracker
+    total_posts_today?: number;
+    last_reset_date?: string; // For daily stats reset (YYYY-MM-DD)
+}
+
+// RSS Item from feed parsing
+export interface RssItem {
+    title: string;
+    link: string;
+    pubDate: string;
+    description?: string;
 }

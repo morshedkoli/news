@@ -32,6 +32,11 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // Ads Configuration
+    match /system_ads/{adId} {
+      allow read, write: if isAdmin();
+    }
+
     // Admins Collection
     // Only the admin themselves can read their doc (for verification)
     match /admins/{email} {

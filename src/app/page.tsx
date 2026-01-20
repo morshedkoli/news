@@ -141,7 +141,14 @@ export default function Home() {
                       {news.source_name || "Unknown"}
                     </td>
                     <td className="px-6 py-4">
-                      {news.published_at?.seconds ? format(new Date(news.published_at.seconds * 1000), "MMM d, p") : "N/A"}
+                      {news.published_at
+                        ? format(
+                          (typeof news.published_at.toDate === 'function')
+                            ? news.published_at.toDate()
+                            : new Date(news.published_at), // Fallback for Date objects or strings
+                          "MMM d, p"
+                        )
+                        : "N/A"}
                     </td>
                     <td className="px-6 py-4">
                       <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${news.published !== false ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-800"

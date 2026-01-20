@@ -1,12 +1,7 @@
 import { dbAdmin } from "@/lib/firebase-admin";
 import { XMLParser } from "fast-xml-parser";
+import { RssItem } from "@/types/rss";
 
-interface RssItem {
-    title: string;
-    link: string;
-    pubDate: string;
-    description?: string;
-}
 
 export async function parseRssFeed(feedUrl: string): Promise<RssItem[]> {
     try {

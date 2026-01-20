@@ -9,7 +9,8 @@ export const runtime = 'nodejs';
 export const maxDuration = 60; // Allow 60s for fetching/AI
 
 // Update System Prompt to be stricter
-const SYSTEM_PROMPT = `You are a professional Bangla news editor.
+// Update System Prompts for Multi-language Support
+const SYSTEM_PROMPT_BANGLA = `You are a professional Bangla news editor.
 Rules:
 - Write in Bangla only
 - Neutral journalistic tone
@@ -24,6 +25,24 @@ Output format JSON ONLY:
 {
   "title": "Clean Bangla Title",
   "summary": "Bangla Summary..."
+}`;
+
+const SYSTEM_PROMPT_ENGLISH = `You are a professional news editor.
+Rules:
+- READ the English news and WRITE a concise summary in BANGLA.
+- Do NOT translate sentence-by-sentence.
+- Synthesize the main points into a clear Bangla summary.
+- Maintain neutral journalistic tone.
+- No opinions, no analysis.
+- Use short paragraphs (max 6 paragraphs, max 2 lines each).
+- Max 150 words total.
+- Translate names/places accurately (e.g. "Bangladesh" → "বাংলাদেশ").
+- **IMPORTANT: Output strictly valid JSON. Use \\n for line breaks.**
+
+Output format JSON ONLY:
+{
+  "title": "Engaging Bangla Title",
+  "summary": "Concise Bangla Summary..."
 }`;
 
 export async function POST(req: Request) {
@@ -89,14 +108,30 @@ export async function POST(req: Request) {
         }
 
         // 2. Summarize with AI Engine
-        const textToSummarize = article.textContent.slice(0, 20000);
-        const userPrompt = `নিচের সংবাদটি সংক্ষেপে উপস্থাপন করুন। মূল তথ্য ঠিক রাখুন। কোনো মতামত দেবেন না।\n\nসংবাদ:\n${textToSummarize}`;
+        const textToSummarize = article.textContent.slice(0, 8000); // 8k chars limit
+
+        // Detect Language
+        const isBangla = /[ঀ-৿]/.test(article.textContent.slice(0, 500));
+        const language = isBangla ? 'Bangla' : 'English';
+
+        console.log(`🌍 Language detected: ${language} for ${url}`);
+
+        let systemPrompt, userPrompt;
+
+        if (isBangla) {
+            systemPrompt = SYSTEM_PROMPT_BANGLA;
+            userPrompt = `নিচের সংবাদটি সংক্ষেপে উপস্থাপন করুন। মূল তথ্য ঠিক রাখুন। কোনো মতামত দেবেন না।\n\nসংবাদ:\n${textToSummarize}`;
+        } else {
+            systemPrompt = SYSTEM_PROMPT_ENGLISH;
+            // Explicit instruction for Summary + Translation
+            userPrompt = `Summarize the following English news into a clear, engaging Bangla news report. Capture all key facts.\n\nEnglish News:\n${textToSummarize}`;
+        }
 
         let generated = null;
         let aiKey: any = null;
         try {
             aiKey = await generateContent(userPrompt, {
-                systemPrompt: SYSTEM_PROMPT,
+                systemPrompt: systemPrompt,
                 temperature: 0.2,
                 jsonMode: true
             });
@@ -158,9 +193,49 @@ export async function POST(req: Request) {
             }
 
         } catch (aiError) {
-            console.warn("AI Generation failed completely. Fallback to excerpt.", aiError);
-            // FAIL-SAFE: If ALL AI fails, just return the raw article excerpt.
-            // Do not break the flow.
+            console.warn("first attempt failed", aiError);
+        }
+
+        // RETRY LOGIC: If JSON generation failed, try Plain Text mode
+        if ((!generated || !generated.summary) && language === 'English') {
+            console.log("🔄 Retry: AI JSON failed, attempting Plain Text Translation...");
+
+            try {
+                const retryPrompt = `Summarize this news in Bangla (Title + Summary).
+Format:
+Title: [Bangla Title]
+Summary: [Bangla Summary]
+
+News:
+${textToSummarize}`;
+
+                const retryAiKey = await generateContent(retryPrompt, {
+                    systemPrompt: "You are a professional editor. Summarize English news to Bangla. Output strict 'Title: ... Summary: ...' format.",
+                    temperature: 0.1
+                });
+
+                if (retryAiKey && retryAiKey.content) {
+                    const content = retryAiKey.content;
+                    const titleMatch = content.match(/Title:\s*(.+)/i);
+                    const summaryMatch = content.match(/Summary:\s*([\s\S]+)/i);
+
+                    if (summaryMatch) {
+                        generated = {
+                            title: titleMatch ? titleMatch[1].trim() : article.title,
+                            summary: summaryMatch[1].trim()
+                        };
+                        aiKey = retryAiKey; // specific success
+                        console.log("✅ Retry Success: Translated via Plain Text mode");
+                    }
+                }
+            } catch (retryError) {
+                console.warn("❌ Retry failed:", retryError);
+            }
+        }
+
+        // Final Fallback if both attempts fail
+        if (!generated || !generated.summary) {
+            console.warn("AI Generation failed completely. Fallback to excerpt.");
             generated = {
                 title: article.title,
                 summary: article.excerpt || article.textContent.substring(0, 500) + "..."
@@ -174,7 +249,8 @@ export async function POST(req: Request) {
             provider_info: {
                 provider: aiKey?.providerUsed || 'Unknown',
                 model: aiKey?.modelUsed || 'Unknown'
-            }
+            },
+            language_detected: (aiKey?.providerUsed !== 'Fallback') ? language : null
         });
 
     } catch (error: any) {

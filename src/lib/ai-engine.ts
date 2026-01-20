@@ -150,10 +150,10 @@ async function callProviderTemplate(
 
         // Dynamic Variable Replacement
         bodyStr = bodyStr
-            .replace(/{{API_KEY}}/g, p.apiKey || '')
-            .replace(/{{MODEL}}/g, p.model)
-            .replace(/{{SYSTEM_PROMPT}}/g, JSON.stringify(sys).slice(1, -1))
-            .replace(/{{USER_PROMPT}}/g, JSON.stringify(prompt).slice(1, -1));
+            .replace(/{{API_KEY}}/g, () => p.apiKey || '')
+            .replace(/{{MODEL}}/g, () => p.model)
+            .replace(/{{SYSTEM_PROMPT}}/g, () => JSON.stringify(sys).slice(1, -1))
+            .replace(/{{USER_PROMPT}}/g, () => JSON.stringify(prompt).slice(1, -1));
 
         body = bodyStr; // It's a string now, ready for sending
     }

@@ -8,11 +8,128 @@ export interface ArticleData {
     byline: string;
     siteName: string;
     image: string | null;
+    category: string | null; // Auto-detected from article metadata
 }
 
 export type FetchResult =
     | { success: true; data: ArticleData }
     | { success: false; error: string; details?: any };
+
+/**
+ * Category mapping from English/URL patterns to Bangla
+ */
+const CATEGORY_MAP: Record<string, string> = {
+    // English to Bangla
+    'sports': 'খেলাধুলা',
+    'politics': 'রাজনীতি',
+    'technology': 'প্রযুক্তি',
+    'tech': 'প্রযুক্তি',
+    'entertainment': 'বিনোদন',
+    'business': 'অর্থনীতি',
+    'economy': 'অর্থনীতি',
+    'health': 'স্বাস্থ্য',
+    'science': 'বিজ্ঞান',
+    'education': 'শিক্ষা',
+    'international': 'আন্তর্জাতিক',
+    'world': 'আন্তর্জাতিক',
+    'national': 'জাতীয়',
+    'lifestyle': 'জীবনযাত্রা',
+    'opinion': 'মতামত',
+    'editorial': 'সম্পাদকীয়',
+
+    // Bangla categories (already in Bangla)
+    'খেলাধুলা': 'খেলাধুলা',
+    'রাজনীতি': 'রাজনীতি',
+    'প্রযুক্তি': 'প্রযুক্তি',
+    'বিনোদন': 'বিনোদন',
+    'অর্থনীতি': 'অর্থনীতি',
+    'স্বাস্থ্য': 'স্বাস্থ্য',
+    'বিজ্ঞান': 'বিজ্ঞান',
+    'শিক্ষা': 'শিক্ষা',
+    'আন্তর্জাতিক': 'আন্তর্জাতিক',
+    'জাতীয়': 'জাতীয়',
+};
+
+/**
+ * Extract category from article metadata and URL
+ */
+function extractCategory($: cheerio.CheerioAPI, url: string): string | null {
+    // 1. Try article:section meta tag (most reliable)
+    let category = $('meta[property="article:section"]').attr('content');
+    if (category) {
+        category = category.trim().toLowerCase();
+        const mapped = CATEGORY_MAP[category];
+        if (mapped) return mapped;
+    }
+
+    // 2. Try og:article:section
+    category = $('meta[property="og:article:section"]').attr('content');
+    if (category) {
+        category = category.trim().toLowerCase();
+        const mapped = CATEGORY_MAP[category];
+        if (mapped) return mapped;
+    }
+
+    // 3. Try article:tag (sometimes used for category)
+    category = $('meta[property="article:tag"]').attr('content');
+    if (category) {
+        category = category.trim().toLowerCase();
+        const mapped = CATEGORY_MAP[category];
+        if (mapped) return mapped;
+    }
+
+    // 4. Try category meta tag
+    category = $('meta[name="category"]').attr('content');
+    if (category) {
+        category = category.trim().toLowerCase();
+        const mapped = CATEGORY_MAP[category];
+        if (mapped) return mapped;
+    }
+
+    // 5. Try to extract from URL path
+    // Common patterns: /sports/article, /category/sports/article, /bn/sports/article
+    try {
+        const urlObj = new URL(url);
+        const pathParts = urlObj.pathname.split('/').filter(p => p.length > 0);
+
+        // Check each path segment
+        for (const part of pathParts) {
+            const normalized = part.toLowerCase();
+            const mapped = CATEGORY_MAP[normalized];
+            if (mapped) return mapped;
+        }
+    } catch (e) {
+        // Invalid URL, skip
+    }
+
+    // 6. Try breadcrumb navigation
+    const breadcrumbs = $('.breadcrumb a, .breadcrumbs a, [class*="breadcrumb"] a');
+    breadcrumbs.each((_, el) => {
+        const text = $(el).text().trim().toLowerCase();
+        const mapped = CATEGORY_MAP[text];
+        if (mapped && !category) {
+            category = mapped;
+            return false; // Break loop
+        }
+    });
+    if (category) return category;
+
+    // 7. Try category links/tags in article
+    const categoryLinks = $('a[rel="category"], .category a, .categories a, [class*="category"] a');
+    categoryLinks.each((_, el) => {
+        const text = $(el).text().trim().toLowerCase();
+        const mapped = CATEGORY_MAP[text];
+        if (mapped && !category) {
+            category = mapped;
+            return false; // Break loop
+        }
+    });
+    if (category) return category;
+
+    // No category found
+    return null;
+}
+
 
 export async function fetchArticle(url: string): Promise<FetchResult> {
     try {
@@ -59,6 +176,9 @@ export async function fetchArticle(url: string): Promise<FetchResult> {
             $('meta[property="og:site_name"]').attr('content') ||
             new URL(url).hostname;
 
+        // Extract Category from multiple sources
+        const category = extractCategory($, url);
+
         // 3. Extract Main Content (Heuristic)
         // Try common selectors for news sites
         let contentEl = $('article');
@@ -89,7 +209,8 @@ export async function fetchArticle(url: string): Promise<FetchResult> {
             excerpt: excerpt,
             byline: "", // Hard to extract reliably without Readability
             siteName: siteName,
-            image: ogImage
+            image: ogImage,
+            category: category
         };
 
         if (textContent.length < 50) {

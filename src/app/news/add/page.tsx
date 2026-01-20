@@ -42,6 +42,7 @@ export default function AddNewsPage() {
         source_name: string;
     } | null>(null);
     const [providerInfo, setProviderInfo] = useState<{ provider: string; model: string } | null>(null);
+    const [language, setLanguage] = useState<string | null>(null);
     const [duplicateWarning, setDuplicateWarning] = useState<{ error: string; details: string; article?: any; generated?: any } | null>(null);
     const [isDuplicate, setIsDuplicate] = useState(false);
 
@@ -55,6 +56,7 @@ export default function AddNewsPage() {
         setError("");
         setDuplicateWarning(null);
         setProviderInfo(null);
+        setLanguage(null);
         setNewsData(null);
         setIsDuplicate(false);
         updateProgress(10, "Validating URL...");
@@ -105,10 +107,19 @@ export default function AddNewsPage() {
                 setProviderInfo(data.provider_info);
             }
 
-            if (!data.generated) {
-                setError("AI generation failed. Loaded original metadata.");
+            if (data.language_detected === 'English') {
+                updateProgress(90, "Translation from English complete!");
             }
-            updateProgress(100, "Done!");
+
+            if (data.language_detected) {
+                setLanguage(data.language_detected);
+            }
+
+            if (data.provider_info?.provider === 'Fallback' || !data.generated) {
+                setError("⚠️ AI generation failed. Loaded original content (Raw).");
+            } else {
+                updateProgress(100, "Done!");
+            }
         } catch (err: any) {
             console.error(err);
             setError(err.message);
@@ -319,6 +330,14 @@ export default function AddNewsPage() {
                     <h1 className="text-2xl font-bold text-slate-900">Edit & Publish</h1>
                     <div className="flex items-center gap-2 mt-1">
                         <p className="text-slate-500">Review the AI-generated content.</p>
+                        {language && (
+                            <div className={`flex items-center gap-1.5 rounded-full px-3 py-0.5 text-xs font-medium border ${language === 'English'
+                                ? 'bg-purple-50 text-purple-700 border-purple-100'
+                                : 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                                }`}>
+                                <span>{language === 'English' ? '🇬🇧 Translated from English' : '🇧🇩 Original Bangla'}</span>
+                            </div>
+                        )}
                         {providerInfo && (
                             <div className="flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-0.5 text-xs font-medium text-indigo-700 border border-indigo-100">
                                 <span>{providerInfo.provider}</span>

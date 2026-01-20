@@ -9,16 +9,12 @@ import {
     doc,
     onSnapshot,
     query,
-    where,
-    serverTimestamp,
     orderBy,
     updateDoc,
-    Timestamp,
-    setDoc
+    serverTimestamp,
 } from "firebase/firestore";
-import { Plus, Trash2, RefreshCw, Rss, Globe, PauseCircle, PlayCircle, Clock, Calendar, AlertCircle, Settings } from "lucide-react";
-import { formatDistanceToNow, format } from "date-fns";
-import Link from 'next/link';
+import { Trash2, RefreshCw, Rss, Globe, PauseCircle, PlayCircle, Clock, AlertCircle, TrendingUp } from "lucide-react";
+import { formatDistanceToNow, format, addMinutes } from "date-fns";
 
 interface RssFeed {
     id: string;
@@ -26,21 +22,34 @@ interface RssFeed {
     url: string;
     enabled: boolean;
     category?: string;
-    start_time: string;
-    interval_minutes: number;
-    safety_delay_minutes: number;
-    last_run_at?: any;
-    next_run_at?: any;
-    status: 'idle' | 'running' | 'error' | 'cooldown';
+    priority: number;
+    last_checked_at?: any;
+    last_success_at?: any;
+    cooldown_until?: any;
+    failure_count?: number;
     error_log?: string;
 }
 
+interface RssSettings {
+    last_news_posted_at?: any;
+    total_posts_today?: number;
+    last_reset_date?: string;
+}
+
+import CronStatusModal from "@/components/CronStatusModal";
+
 export default function RssPage() {
     const [feeds, setFeeds] = useState<RssFeed[]>([]);
-    const [progress, setProgress] = useState<any>(null);
+    const [settings, setSettings] = useState<RssSettings | null>(null);
     const [triggering, setTriggering] = useState(false);
-    const [aiCount, setAiCount] = useState<number | null>(null);
-    const [autoRun, setAutoRun] = useState(false); // Auto-Pilot State
+
+    // Cron Modal State
+    const [cronModal, setCronModal] = useState({
+        isOpen: false,
+        isLoading: false,
+        data: null,
+        error: null as string | null
+    });
 
     // Form State
     const [isEditing, setIsEditing] = useState(false);
@@ -48,17 +57,14 @@ export default function RssPage() {
     const [formData, setFormData] = useState({
         name: "",
         url: "",
-        category: "general",
-        start_time: "09:00",
-        interval_minutes: 60,
-        safety_delay_minutes: 5,
+        category: "সাধারণ",
+        priority: 10,
         enabled: true
     });
 
-
     useEffect(() => {
         // Feeds Listener
-        const q = query(collection(db, "rss_feeds"), orderBy("name"));
+        const q = query(collection(db, "rss_feeds"), orderBy("priority", "desc"));
         const unsub = onSnapshot(q, (snapshot) => {
             const feedsData = snapshot.docs.map((doc) => ({
                 id: doc.id,
@@ -67,69 +73,25 @@ export default function RssPage() {
             setFeeds(feedsData);
         });
 
-        // Progress Listener
-        const unsubProgress = onSnapshot(doc(db, "system_stats", "rss_progress"), (doc) => {
-            if (doc.exists()) {
-                const data = doc.data();
-                setProgress(data);
-                if (data.status === 'running' || data.status === 'waiting') {
-                    setTriggering(true);
-                } else {
-                    setTriggering(false);
-                }
+        // Settings Listener
+        const unsubSettings = onSnapshot(doc(db, "system_stats", "rss_settings"), (docSnap) => {
+            if (docSnap.exists()) {
+                setSettings(docSnap.data() as RssSettings);
             }
         });
 
-        // Active AI Listener
-        const qAi = query(collection(db, "ai_providers"), where("enabled", "==", true));
-        const unsubAi = onSnapshot(qAi, (snap) => {
-            setAiCount(snap.size);
-        });
-
-        return () => { unsub(); unsubProgress(); unsubAi(); };
+        return () => {
+            unsub();
+            unsubSettings();
+        };
     }, []);
-
-    // Auto-Pilot Effect
-    useEffect(() => {
-        if (!autoRun) return;
-
-        const interval = setInterval(() => {
-            if (!progress) return;
-
-            // Check logic:
-            // 1. Not running
-            // 2. Cooldown expired (or null)
-            // 3. AI is online
-
-            const now = new Date();
-            // Fix: 'waiting' essentially means "Waiting for Cooldown". 
-            // So IF cooldown is over, strict 'running' is the only blocker.
-            const isRunning = progress.status === 'running';
-
-            let isCooldown = false;
-            if (progress.cooldown_until) {
-                const cooldownDate = new Date(progress.cooldown_until.seconds * 1000);
-                if (now < cooldownDate) isCooldown = true;
-            }
-
-            if (!isRunning && !isCooldown && aiCount && aiCount > 0 && !triggering) {
-                console.log("✈️ Auto-Pilot: Triggering Cron...");
-                handleTriggerCron();
-            }
-
-        }, 10000); // Check every 10s
-
-        return () => clearInterval(interval);
-    }, [autoRun, progress, aiCount, triggering]);
 
     const resetForm = () => {
         setFormData({
             name: "",
             url: "",
-            category: "general",
-            start_time: "09:00",
-            interval_minutes: 60,
-            safety_delay_minutes: 5,
+            category: "সাধারণ",
+            priority: 10,
             enabled: true
         });
         setEditId(null);
@@ -139,20 +101,18 @@ export default function RssPage() {
     const handleSave = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
-            const payload = {
-                ...formData,
-                status: 'idle',
-                next_run_at: serverTimestamp()
-            };
-
             if (editId) {
                 await updateDoc(doc(db, "rss_feeds", editId), {
                     ...formData,
                 });
             } else {
                 await addDoc(collection(db, "rss_feeds"), {
-                    ...payload,
-                    last_run_at: null
+                    ...formData,
+                    last_checked_at: null,
+                    last_success_at: null,
+                    cooldown_until: null,
+                    failure_count: 0,
+                    error_log: ""
                 });
             }
             resetForm();
@@ -176,204 +136,250 @@ export default function RssPage() {
 
     const handleTriggerCron = async () => {
         setTriggering(true);
-        // Optimistic UI
-        setProgress({ status: 'starting', logs: ['Manually triggered...'] });
-        fetch("/api/cron/rss").catch(console.error);
+        setCronModal({
+            isOpen: true,
+            isLoading: true,
+            data: null,
+            error: null
+        });
+
+        try {
+            const response = await fetch("/api/cron/rss");
+            const data = await response.json();
+
+            setCronModal(prev => ({
+                ...prev,
+                isLoading: false,
+                data: data
+            }));
+
+        } catch (error: any) {
+            console.error("Cron error:", error);
+            setCronModal(prev => ({
+                ...prev,
+                isLoading: false,
+                error: error.message || "Failed to trigger cron"
+            }));
+        } finally {
+            setTriggering(false);
+        }
     };
+
+    // Calculate next available post time
+    const getNextPostTime = () => {
+        if (!settings?.last_news_posted_at) return "Now";
+        const lastPost = settings.last_news_posted_at.toDate();
+        const nextPost = addMinutes(lastPost, 30);
+        const now = new Date();
+
+        if (nextPost <= now) return "Now";
+        return format(nextPost, 'HH:mm:ss');
+    };
+
+    const getMinutesUntilNext = () => {
+        if (!settings?.last_news_posted_at) return 0;
+        const lastPost = settings.last_news_posted_at.toDate();
+        const nextPost = addMinutes(lastPost, 30);
+        const now = new Date();
+        const diff = Math.max(0, Math.ceil((nextPost.getTime() - now.getTime()) / (1000 * 60)));
+        return diff;
+    };
+
+    const isGlobalCooldown = getMinutesUntilNext() > 0;
 
     return (
         <div className="space-y-8">
 
-            {/* 1. STATUS DASHBOARD (Top Section) */}
+            {/* GLOBAL STATUS DASHBOARD */}
             <div className="grid gap-4 md:grid-cols-12">
 
-                {/* System Status Card */}
-                <div className="md:col-span-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm relative overflow-hidden">
+                {/* Last Post Status */}
+                <div className="md:col-span-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                     <div className="flex items-center justify-between mb-2">
-                        <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">System Status</h3>
-                        {progress?.status === 'running' && <RefreshCw className="w-4 h-4 text-indigo-500 animate-spin" />}
+                        <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Last Post</h3>
+                        <Clock className="w-4 h-4 text-indigo-500" />
                     </div>
-                    <div className="text-2xl font-black text-slate-800 uppercase flex items-center gap-2">
-                        <div className={`w-3 h-3 rounded-full ${progress?.status === 'running' ? 'bg-indigo-500 animate-pulse' : progress?.status === 'error' ? 'bg-red-500' : 'bg-slate-400'}`}></div>
-                        {progress?.status || 'LOADING...'}
+                    <div className="text-2xl font-black text-slate-800">
+                        {settings?.last_news_posted_at
+                            ? formatDistanceToNow(settings.last_news_posted_at.toDate(), { addSuffix: true })
+                            : "Never"
+                        }
                     </div>
-                    {progress?.cooldown_until && (
-                        <p className="text-xs text-amber-600 mt-2 font-medium bg-amber-50 inline-block px-2 py-1 rounded">
-                            Cooldown: {new Date(progress.cooldown_until.seconds * 1000).toLocaleTimeString()}
+                    {settings?.last_news_posted_at && (
+                        <p className="text-xs text-slate-400 mt-1">
+                            {format(settings.last_news_posted_at.toDate(), 'PPpp')}
                         </p>
                     )}
                 </div>
 
-                {/* AI Status Card */}
-                <div className="md:col-span-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                {/* Next Post Time */}
+                <div className={`md:col-span-4 rounded-xl border p-5 shadow-sm ${isGlobalCooldown
+                    ? 'border-amber-200 bg-amber-50'
+                    : 'border-emerald-200 bg-emerald-50'
+                    }`}>
                     <div className="flex items-center justify-between mb-2">
-                        <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">AI Engines</h3>
-                        {aiCount !== null && aiCount > 0 ? <Globe className="w-4 h-4 text-emerald-500" /> : <AlertCircle className="w-4 h-4 text-red-500" />}
-                    </div>
-                    <div className="text-2xl font-black text-slate-800 flex items-center gap-2">
-                        {aiCount === null ? 'Checking...' : aiCount > 0 ? (
-                            <span className="text-emerald-600 flex items-center gap-2">
-                                ONLINE <span className="text-sm font-normal text-slate-400">({aiCount} Active)</span>
-                            </span>
+                        <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Next Post</h3>
+                        {isGlobalCooldown ? (
+                            <RefreshCw className="w-4 h-4 text-amber-500 animate-spin" />
                         ) : (
-                            <span className="text-red-500">OFFLINE</span>
+                            <PlayCircle className="w-4 h-4 text-emerald-500" />
                         )}
                     </div>
-                    <p className="text-xs text-slate-400 mt-2">Required for summarization.</p>
+                    <div className={`text-2xl font-black ${isGlobalCooldown ? 'text-amber-600' : 'text-emerald-600'
+                        }`}>
+                        {getNextPostTime()}
+                    </div>
+                    {isGlobalCooldown && (
+                        <p className="text-xs text-amber-600 mt-1 font-medium">
+                            Cooldown: {getMinutesUntilNext()} minutes remaining
+                        </p>
+                    )}
                 </div>
 
-                {/* Quick Actions */}
-                <div className="md:col-span-4 rounded-xl border border-slate-200 bg-slate-50 p-5 shadow-sm flex flex-col justify-center gap-2">
+                {/* Daily Stats */}
+                <div className="md:col-span-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <div className="flex items-center justify-between mb-2">
+                        <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Today's Posts</h3>
+                        <TrendingUp className="w-4 h-4 text-indigo-500" />
+                    </div>
+                    <div className="text-2xl font-black text-indigo-600">
+                        {settings?.total_posts_today || 0}
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1">
+                        Auto-posted via RSS
+                    </p>
+                </div>
+            </div>
+
+            {/* Manual Trigger Button */}
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 shadow-sm">
+                <div className="flex items-center justify-between">
+                    <div>
+                        <h3 className="font-bold text-slate-900">Manual Trigger</h3>
+                        <p className="text-sm text-slate-500">Test the RSS cron endpoint manually</p>
+                    </div>
                     <button
                         onClick={handleTriggerCron}
-                        disabled={triggering || (aiCount === 0)}
-                        className="w-full flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-3 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50 transition shadow-sm"
+                        disabled={triggering}
+                        className="flex items-center justify-center rounded-lg bg-indigo-600 px-6 py-3 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50 transition shadow-sm"
                     >
                         <PlayCircle className={`mr-2 h-4 w-4 ${triggering ? 'animate-spin' : ''}`} />
-                        {triggering ? 'System Running...' : 'Run Master Cron Now'}
+                        {triggering ? 'Running...' : 'Run Cron Now'}
                     </button>
-                    {(aiCount === 0) && <p className="text-[10px] text-red-500 text-center">Cannot run: No AI Providers online</p>}
+                </div>
+            </div>
 
-                    {/* Auto-Pilot Toggle */}
-                    <div className="flex items-center justify-center gap-2 mt-2 pt-2 border-t border-slate-200">
-                        <span className={`text-xs font-bold uppercase ${autoRun ? 'text-indigo-600 animate-pulse' : 'text-slate-400'}`}>
-                            {autoRun ? 'Auto-Pilot Active' : 'Auto-Pilot Off'}
-                        </span>
-                        <button
-                            onClick={() => setAutoRun(!autoRun)}
-                            className={`w-10 h-6 rounded-full relative transition-colors ${autoRun ? 'bg-indigo-600' : 'bg-slate-300'}`}
-                        >
-                            <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${autoRun ? 'translate-x-4' : ''}`}></div>
-                        </button>
+            {/* Info Banner */}
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
+                <div className="flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 text-indigo-600 mt-0.5" />
+                    <div className="flex-1">
+                        <h4 className="font-bold text-indigo-900 mb-1">Global 30-Minute Interval</h4>
+                        <p className="text-sm text-indigo-700">
+                            The system posts <strong>one article every 30 minutes</strong> from all enabled feeds.
+                            Feeds are checked by priority (highest first), then by last checked time (oldest first).
+                            Each successful feed gets a 30-minute cooldown. Set up cron-job.org to trigger
+                            <code className="mx-1 px-1 bg-indigo-100 rounded">/api/cron/rss</code> every 30 minutes.
+                        </p>
                     </div>
                 </div>
             </div>
 
-            {/* Live Logs (Collapsible or visible) */}
-            {progress && (
-                <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 shadow-lg text-slate-300 font-mono text-xs">
-                    <div className="flex justify-between items-center border-b border-slate-800 pb-2 mb-2">
-                        <span className="font-bold text-white uppercase tracking-wider">Live System Logs</span>
-                        <span className="text-slate-500 text-[10px]">Auto-updating</span>
-                    </div>
-                    <div className="h-32 overflow-y-auto custom-scrollbar flex flex-col-reverse">
-                        {[...(progress.logs || [])].reverse().slice(0, 20).map((log: string, idx: number) => (
-                            <div key={idx} className="py-0.5 border-b border-slate-800/50">{log}</div>
-                        ))}
-                    </div>
-                </div>
-            )}
-
-            {/* Header Title */}
+            {/* Header */}
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between pt-4 border-t border-slate-100">
                 <div>
                     <h1 className="text-2xl font-bold text-slate-900">RSS Feeds</h1>
-                    <p className="text-slate-500">Manage your news sources.</p>
-                </div>
-                <div className="flex gap-2">
-                    <Link href="/rss/settings">
-                        <button className="flex items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition">
-                            <Settings className="mr-2 h-4 w-4" />
-                            Global Settings
-                        </button>
-                    </Link>
+                    <p className="text-slate-500">Manage your news sources</p>
                 </div>
             </div>
 
             <div className="grid gap-8 lg:grid-cols-3">
 
-                {/* LIST */}
+                {/* FEED LIST */}
                 <div className="lg:col-span-2 space-y-4">
-                    {feeds.map((feed) => (
-                        <div key={feed.id} className={`group relative rounded-xl border p-5 transition-all ${feed.status === 'running' ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-200' :
-                            !feed.enabled ? 'border-slate-100 bg-slate-50 opacity-75' :
-                                'border-slate-200 bg-white hover:border-indigo-200 hover:shadow-sm'
-                            }`}>
-                            <div className="flex justify-between items-start mb-4">
-                                <div>
-                                    <div className="flex items-center gap-2">
-                                        <h3 className="font-bold text-slate-900 text-lg">{feed.name || "Unnamed Feed"}</h3>
-                                        {feed.status === 'running' && <span className="px-2 py-0.5 rounded text-xs font-bold bg-indigo-100 text-indigo-700 animate-pulse">RUNNING</span>}
-                                        {feed.status === 'error' && <span className="px-2 py-0.5 rounded text-xs font-bold bg-red-100 text-red-700">ERROR</span>}
-                                        {!feed.enabled && <span className="px-2 py-0.5 rounded text-xs font-bold bg-slate-200 text-slate-500">DISABLED</span>}
+                    {feeds.map((feed) => {
+                        const inCooldown = feed.cooldown_until && feed.cooldown_until.toDate() > new Date();
+
+                        return (
+                            <div key={feed.id} className={`group relative rounded-xl border p-5 transition-all ${!feed.enabled ? 'border-slate-100 bg-slate-50 opacity-75' :
+                                inCooldown ? 'border-amber-200 bg-amber-50' :
+                                    'border-slate-200 bg-white hover:border-indigo-200 hover:shadow-sm'
+                                }`}>
+                                <div className="flex justify-between items-start mb-4">
+                                    <div className="flex-1">
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <h3 className="font-bold text-slate-900 text-lg">{feed.name || "Unnamed Feed"}</h3>
+                                            {!feed.enabled && <span className="px-2 py-0.5 rounded text-xs font-bold bg-slate-200 text-slate-500">DISABLED</span>}
+                                            {inCooldown && <span className="px-2 py-0.5 rounded text-xs font-bold bg-amber-100 text-amber-700">COOLDOWN</span>}
+                                        </div>
+                                        <p className="text-sm text-slate-500 truncate max-w-md" title={feed.url}>{feed.url}</p>
                                     </div>
-                                    <p className="text-sm text-slate-500 truncate max-w-md" title={feed.url}>{feed.url}</p>
+                                    <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <button onClick={() => {
+                                            setFormData({
+                                                name: feed.name,
+                                                url: feed.url,
+                                                category: feed.category || "সাধারণ",
+                                                priority: feed.priority || 10,
+                                                enabled: feed.enabled
+                                            });
+                                            setEditId(feed.id);
+                                            setIsEditing(true);
+                                        }} className="p-2 text-slate-400 hover:text-indigo-600 text-sm">
+                                            Edit
+                                        </button>
+                                        <button onClick={() => handleDelete(feed.id)} className="p-2 text-slate-400 hover:text-red-600">
+                                            <Trash2 className="w-4 h-4" />
+                                        </button>
+                                    </div>
                                 </div>
-                                <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <button onClick={() => {
-                                        setFormData({
-                                            name: feed.name,
-                                            url: feed.url,
-                                            category: feed.category || "general",
-                                            start_time: feed.start_time,
-                                            interval_minutes: feed.interval_minutes,
-                                            safety_delay_minutes: feed.safety_delay_minutes,
-                                            enabled: feed.enabled
-                                        });
-                                        setEditId(feed.id);
-                                        setIsEditing(true);
-                                    }} className="p-2 text-slate-400 hover:text-indigo-600">
-                                        Edit
+
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+                                    <div className="space-y-1">
+                                        <p className="text-xs font-bold text-slate-400 uppercase">Category</p>
+                                        <p className="font-medium text-indigo-600">
+                                            {feed.category || 'সাধারণ'}
+                                        </p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <p className="text-xs font-bold text-slate-400 uppercase">Priority</p>
+                                        <p className="font-medium text-slate-700">
+                                            {feed.priority || 10}
+                                        </p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <p className="text-xs font-bold text-slate-400 uppercase">Last Checked</p>
+                                        <p className="font-medium text-slate-500">
+                                            {feed.last_checked_at ? formatDistanceToNow(feed.last_checked_at.toDate(), { addSuffix: true }) : 'Never'}
+                                        </p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <p className="text-xs font-bold text-slate-400 uppercase">Last Success</p>
+                                        <p className="font-medium text-emerald-600">
+                                            {feed.last_success_at ? formatDistanceToNow(feed.last_success_at.toDate(), { addSuffix: true }) : 'Never'}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                {/* Actions Footer */}
+                                <div className="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center">
+                                    <button
+                                        onClick={() => handleToggle(feed)}
+                                        className={`text-xs font-bold flex items-center gap-1 ${feed.enabled ? 'text-amber-600 hover:text-amber-700' : 'text-emerald-600 hover:text-emerald-700'}`}
+                                    >
+                                        {feed.enabled ? <><PauseCircle className="w-4 h-4" /> Disable</> : <><PlayCircle className="w-4 h-4" /> Enable</>}
                                     </button>
-                                    <button onClick={() => handleDelete(feed.id)} className="p-2 text-slate-400 hover:text-red-600">
-                                        <Trash2 className="w-4 h-4" />
-                                    </button>
+
+                                    {feed.error_log && (
+                                        <span className="text-red-500 text-xs flex items-center gap-1" title={feed.error_log}>
+                                            <AlertCircle className="w-3 h-3" />
+                                            Error: {feed.error_log.substring(0, 30)}...
+                                        </span>
+                                    )}
                                 </div>
                             </div>
-
-                            <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 text-sm">
-                                <div className="space-y-1">
-                                    <p className="text-xs font-bold text-slate-400 uppercase">Category</p>
-                                    <p className="font-medium text-indigo-600 capitalize">
-                                        {feed.category || 'general'}
-                                    </p>
-                                </div>
-                                <div className="space-y-1">
-                                    <p className="text-xs font-bold text-slate-400 uppercase">Schedule</p>
-                                    <p className="font-medium text-slate-700 flex items-center gap-1">
-                                        <Clock className="w-3.5 h-3.5" />
-                                        {feed.start_time} (Every {feed.interval_minutes}m)
-                                    </p>
-                                </div>
-                                <div className="space-y-1">
-                                    <p className="text-xs font-bold text-slate-400 uppercase">Next Run</p>
-                                    <p className="font-medium text-indigo-600 flex items-center gap-1">
-                                        <Calendar className="w-3.5 h-3.5" />
-                                        {feed.next_run_at ? format(feed.next_run_at.toDate(), 'HH:mm') : 'Pending'}
-                                    </p>
-                                </div>
-                                <div className="space-y-1">
-                                    <p className="text-xs font-bold text-slate-400 uppercase">Safety</p>
-                                    <p className="font-medium text-slate-700">
-                                        +{feed.safety_delay_minutes} min delay
-                                    </p>
-                                </div>
-                                <div className="space-y-1">
-                                    <p className="text-xs font-bold text-slate-400 uppercase">Last Run</p>
-                                    <p className="font-medium text-slate-500">
-                                        {feed.last_run_at ? formatDistanceToNow(feed.last_run_at.toDate(), { addSuffix: true }) : 'Never'}
-                                    </p>
-                                </div>
-                            </div>
-
-                            {/* Actions Footer */}
-                            <div className="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center">
-                                <button
-                                    onClick={() => handleToggle(feed)}
-                                    className={`text-xs font-bold flex items-center gap-1 ${feed.enabled ? 'text-amber-600 hover:text-amber-700' : 'text-emerald-600 hover:text-emerald-700'}`}
-                                >
-                                    {feed.enabled ? <><PauseCircle className="w-4 h-4" /> Disable Feed</> : <><PlayCircle className="w-4 h-4" /> Enable Feed</>}
-                                </button>
-
-                                {feed.error_log && (
-                                    <span className="text-red-500 text-xs flex items-center gap-1" title={feed.error_log}>
-                                        <AlertCircle className="w-3 h-3" />
-                                        Last Error: {feed.error_log.substring(0, 30)}...
-                                    </span>
-                                )}
-                            </div>
-                        </div>
-                    ))}
+                        );
+                    })}
 
                     {feeds.length === 0 && (
                         <div className="text-center py-12 bg-slate-50 rounded-xl border border-dashed border-slate-300">
@@ -383,7 +389,7 @@ export default function RssPage() {
                     )}
                 </div>
 
-                {/* FORM */}
+                {/* ADD/EDIT FORM */}
                 <div className="lg:col-span-1">
                     <div className="sticky top-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
                         <h2 className="text-lg font-bold text-slate-900 mb-4">
@@ -423,49 +429,31 @@ export default function RssPage() {
                                     value={formData.category}
                                     onChange={e => setFormData({ ...formData, category: e.target.value })}
                                 >
-                                    <option value="general">General</option>
-                                    <option value="sports">Sports</option>
-                                    <option value="politics">Politics</option>
-                                    <option value="technology">Technology</option>
-                                    <option value="entertainment">Entertainment</option>
-                                    <option value="business">Business</option>
-                                    <option value="health">Health</option>
-                                    <option value="science">Science</option>
-                                    <option value="education">Education</option>
-                                    <option value="international">International</option>
+                                    <option value="সাধারণ">সাধারণ (General)</option>
+                                    <option value="খেলাধুলা">খেলাধুলা (Sports)</option>
+                                    <option value="রাজনীতি">রাজনীতি (Politics)</option>
+                                    <option value="প্রযুক্তি">প্রযুক্তি (Technology)</option>
+                                    <option value="বিনোদন">বিনোদন (Entertainment)</option>
+                                    <option value="অর্থনীতি">অর্থনীতি (Business)</option>
+                                    <option value="স্বাস্থ্য">স্বাস্থ্য (Health)</option>
+                                    <option value="বিজ্ঞান">বিজ্ঞান (Science)</option>
+                                    <option value="শিক্ষা">শিক্ষা (Education)</option>
+                                    <option value="আন্তর্জাতিক">আন্তর্জাতিক (International)</option>
                                 </select>
                             </div>
 
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="label">Start Time</label>
-                                    <input
-                                        type="time" required
-                                        className="input-field"
-                                        value={formData.start_time}
-                                        onChange={e => setFormData({ ...formData, start_time: e.target.value })}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="label">Interval (Min)</label>
-                                    <input
-                                        type="number" min="15" required
-                                        className="input-field"
-                                        value={formData.interval_minutes}
-                                        onChange={e => setFormData({ ...formData, interval_minutes: parseInt(e.target.value) || 0 })}
-                                    />
-                                </div>
-                            </div>
-
                             <div>
-                                <label className="label">Safety Delay (Min)</label>
+                                <label className="label">Priority</label>
                                 <input
-                                    type="number" min="1" required
+                                    type="number"
+                                    min="1"
+                                    max="100"
+                                    required
                                     className="input-field"
-                                    value={formData.safety_delay_minutes}
-                                    onChange={e => setFormData({ ...formData, safety_delay_minutes: parseInt(e.target.value) || 0 })}
+                                    value={formData.priority}
+                                    onChange={e => setFormData({ ...formData, priority: parseInt(e.target.value) || 10 })}
                                 />
-                                <p className="text-xs text-slate-400 mt-1">Wait this long after this feed finishes.</p>
+                                <p className="text-xs text-slate-400 mt-1">Higher priority feeds are checked first (1-100)</p>
                             </div>
 
                             <div className="flex items-center gap-2 pt-2">
@@ -475,7 +463,7 @@ export default function RssPage() {
                                     onChange={e => setFormData({ ...formData, enabled: e.target.checked })}
                                     className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                                 />
-                                <label htmlFor="enabled" className="text-sm font-medium text-slate-700">Enable Automation</label>
+                                <label htmlFor="enabled" className="text-sm font-medium text-slate-700">Enable Feed</label>
                             </div>
 
                             <div className="flex gap-2 pt-2">
@@ -497,6 +485,14 @@ export default function RssPage() {
                 .label { @apply block text-sm font-medium text-slate-700 mb-1; }
                 .input-field { @apply w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none; }
             `}</style>
+
+            <CronStatusModal
+                isOpen={cronModal.isOpen}
+                onClose={() => setCronModal(prev => ({ ...prev, isOpen: false }))}
+                data={cronModal.data}
+                isLoading={cronModal.isLoading}
+                error={cronModal.error}
+            />
         </div>
     );
 }

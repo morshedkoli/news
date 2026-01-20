@@ -31,15 +31,24 @@ interface NewsItem {
     summary: string;
 }
 
+import DeleteConfirmationModal from "@/components/DeleteConfirmationModal";
+
 export default function NewsListPage() {
     const [news, setNews] = useState<NewsItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
     const [currentPage, setCurrentPage] = useState(1);
+
+    // Delete Modal State
+    const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; id: string | null }>({
+        isOpen: false,
+        id: null
+    });
+    const [isDeleting, setIsDeleting] = useState(false);
+
     const itemsPerPage = 10;
 
-    // For simple pagination on client side (fetching 50-100 items is fine for this scale)
-    // If scaling up, we would use cursor pagination.
+    // ... (useEffect remains same)
 
     useEffect(() => {
         const q = query(collection(db, "news"), orderBy("created_at", "desc"), limit(100));
@@ -54,12 +63,20 @@ export default function NewsListPage() {
         return () => unsubscribe();
     }, []);
 
-    const handleDelete = async (id: string) => {
-        if (!confirm("Are you sure you want to delete this news? This action cannot be undone.")) return;
+    const handleDeleteClick = (id: string) => {
+        setDeleteModal({ isOpen: true, id });
+    };
+
+    const confirmDelete = async () => {
+        if (!deleteModal.id) return;
+        setIsDeleting(true);
         try {
-            await deleteDoc(doc(db, "news", id));
+            await deleteDoc(doc(db, "news", deleteModal.id));
+            setDeleteModal({ isOpen: false, id: null });
         } catch (error) {
             console.error("Delete failed", error);
+        } finally {
+            setIsDeleting(false);
         }
     };
 
@@ -120,7 +137,6 @@ export default function NewsListPage() {
                         className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                     />
                 </div>
-                {/* Could add Date Filter here */}
             </div>
 
             {/* Table */}
@@ -226,7 +242,7 @@ export default function NewsListPage() {
                                                         <Edit size={18} />
                                                     </Link>
                                                     <button
-                                                        onClick={() => handleDelete(item.id)}
+                                                        onClick={() => handleDeleteClick(item.id)}
                                                         className="rounded p-1.5 text-slate-500 transition-colors hover:bg-red-50 hover:text-red-600"
                                                         title="Delete"
                                                     >
@@ -267,6 +283,15 @@ export default function NewsListPage() {
                     </div>
                 )}
             </div>
+
+            <DeleteConfirmationModal
+                isOpen={deleteModal.isOpen}
+                onClose={() => setDeleteModal({ isOpen: false, id: null })}
+                onConfirm={confirmDelete}
+                title="Delete News Article"
+                description="Are you sure you want to delete this article? This action cannot be undone and will permanently remove the content."
+                isDeleting={isDeleting}
+            />
         </div >
     );
 }
