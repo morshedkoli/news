@@ -17,9 +17,30 @@ import {
     where,
 } from "firebase/firestore";
 import { format } from "date-fns";
-import { Edit, Eye, EyeOff, Loader2, Trash2, Search, ChevronLeft, ChevronRight, ThumbsUp, FileText } from "lucide-react";
+import { Edit, Eye, EyeOff, Loader2, Trash2, Search, ChevronLeft, ChevronRight, ThumbsUp, FileText, Tag } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+
+// Available categories for news
+export const CATEGORIES = [
+    "সাধারণ",
+    "খেলাধুলা",
+    "রাজনীতি",
+    "প্রযুক্তি",
+    "বিনোদন",
+    "অর্থনীতি",
+    "স্বাস্থ্য",
+    "বিজ্ঞান",
+    "শিক্ষা",
+    "আন্তর্জাতিক",
+    "জাতীয়",
+    "জীবনযাত্রা",
+    "মতামত",
+    "সম্পাদকীয়",
+    "অপরাধ",
+    "পরিবেশ",
+    "ধর্ম"
+];
 
 interface NewsItem {
     id: string;
@@ -29,6 +50,7 @@ interface NewsItem {
     source_name: string;
     likes: number;
     summary: string;
+    category?: string;
 }
 
 import DeleteConfirmationModal from "@/components/DeleteConfirmationModal";
@@ -38,6 +60,9 @@ export default function NewsListPage() {
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
     const [currentPage, setCurrentPage] = useState(1);
+    const [categoryFilter, setCategoryFilter] = useState("");
+    const [editingCategory, setEditingCategory] = useState<string | null>(null);
+    const [updatingCategory, setUpdatingCategory] = useState(false);
 
     // Delete Modal State
     const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; id: string | null }>({
@@ -90,11 +115,27 @@ export default function NewsListPage() {
         }
     };
 
+    const handleCategoryChange = async (id: string, newCategory: string) => {
+        setUpdatingCategory(true);
+        try {
+            await updateDoc(doc(db, "news", id), {
+                category: newCategory,
+            });
+            setEditingCategory(null);
+        } catch (error) {
+            console.error("Category update failed", error);
+        } finally {
+            setUpdatingCategory(false);
+        }
+    };
+
     // Filter & Pagination Logic
-    const filteredNews = news.filter(item =>
-        item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.source_name?.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const filteredNews = news.filter(item => {
+        const matchesSearch = item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            item.source_name?.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesCategory = !categoryFilter || item.category === categoryFilter;
+        return matchesSearch && matchesCategory;
+    });
 
     const totalPages = Math.ceil(filteredNews.length / itemsPerPage);
     const paginatedNews = filteredNews.slice(
@@ -137,6 +178,19 @@ export default function NewsListPage() {
                         className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                     />
                 </div>
+                <div className="relative">
+                    <Tag className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <select
+                        value={categoryFilter}
+                        onChange={(e) => setCategoryFilter(e.target.value)}
+                        className="rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-8 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 appearance-none cursor-pointer"
+                    >
+                        <option value="">All Categories</option>
+                        {CATEGORIES.map(cat => (
+                            <option key={cat} value={cat}>{cat}</option>
+                        ))}
+                    </select>
+                </div>
             </div>
 
             {/* Table */}
@@ -146,6 +200,7 @@ export default function NewsListPage() {
                         <thead className="bg-slate-50 text-xs uppercase text-slate-500">
                             <tr>
                                 <th className="px-6 py-4 font-medium">Article</th>
+                                <th className="px-6 py-4 font-medium">Category</th>
                                 <th className="px-6 py-4 font-medium">Source</th>
                                 <th className="px-6 py-4 font-medium">Status</th>
                                 <th className="px-6 py-4 font-medium text-center">Likes</th>
@@ -155,7 +210,7 @@ export default function NewsListPage() {
                         <tbody className="divide-y divide-slate-100">
                             {paginatedNews.length === 0 ? (
                                 <tr>
-                                    <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
+                                    <td colSpan={6} className="px-6 py-12 text-center text-slate-500">
                                         No articles found matching your criteria.
                                     </td>
                                 </tr>
@@ -192,6 +247,31 @@ export default function NewsListPage() {
                                                         </div>
                                                     </div>
                                                 </div>
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                {editingCategory === item.id ? (
+                                                    <select
+                                                        value={item.category || "সাধারণ"}
+                                                        onChange={(e) => handleCategoryChange(item.id, e.target.value)}
+                                                        disabled={updatingCategory}
+                                                        className="rounded-md border border-indigo-300 bg-white px-2 py-1 text-xs font-medium text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                                        autoFocus
+                                                        onBlur={() => !updatingCategory && setEditingCategory(null)}
+                                                    >
+                                                        {CATEGORIES.map(cat => (
+                                                            <option key={cat} value={cat}>{cat}</option>
+                                                        ))}
+                                                    </select>
+                                                ) : (
+                                                    <button
+                                                        onClick={() => setEditingCategory(item.id)}
+                                                        className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100 transition-colors"
+                                                        title="Click to change category"
+                                                    >
+                                                        <Tag size={12} />
+                                                        {item.category || "সাধারণ"}
+                                                    </button>
+                                                )}
                                             </td>
                                             <td className="px-6 py-4">
                                                 <span className="inline-flex items-center rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">

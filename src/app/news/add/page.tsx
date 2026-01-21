@@ -4,9 +4,10 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { db } from "@/lib/firebase"; // Keep auth/db init if needed elsewhere but specific firestore functions are removed from here
 // import { collection, addDoc, serverTimestamp } from "firebase/firestore"; // Removed unused imports
-import { Loader2, Save, Send, Link as LinkIcon, AlertCircle } from "lucide-react";
+import { Loader2, Save, Send, Link as LinkIcon, AlertCircle, Tag } from "lucide-react";
 import Link from "next/link";
 import { useAuth } from "@/context/AuthContext";
+import { CATEGORIES } from "../page";
 
 // Client-side URL normalization (mirrors backend logic roughly)
 function normalizeUrlClient(url: string): string {
@@ -40,6 +41,7 @@ export default function AddNewsPage() {
         image: string;
         source_url: string;
         source_name: string;
+        category: string;
     } | null>(null);
     const [providerInfo, setProviderInfo] = useState<{ provider: string; model: string } | null>(null);
     const [language, setLanguage] = useState<string | null>(null);
@@ -98,6 +100,7 @@ export default function AddNewsPage() {
                 image: data.original.image || "",
                 source_url: url,
                 source_name: data.original.siteName,
+                category: data.generated?.category || data.original.category || "সাধারণ",
             });
 
             if (data.provider_info) {
@@ -139,6 +142,7 @@ export default function AddNewsPage() {
             image: data.article.image || "",
             source_url: url,
             source_name: data.article.siteName || "Unknown",
+            category: data.article.category || data.generated?.category || "সাধারণ",
         });
 
         setIsDuplicate(true);
@@ -177,6 +181,7 @@ export default function AddNewsPage() {
                     image: newsData.image,
                     source_url: newsData.source_url,
                     source_name: newsData.source_name,
+                    category: newsData.category,
                     created_by: user.email
                 })
             });
@@ -419,6 +424,25 @@ export default function AddNewsPage() {
                 {/* Right Column: Title & Content */}
                 <div className="lg:col-span-2 space-y-6">
                     <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+
+                        <div className="mb-6">
+                            <label className="mb-2 block text-sm font-semibold text-slate-900">Category</label>
+                            <div className="relative">
+                                <Tag className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                                <select
+                                    value={newsData?.category || "সাধারণ"}
+                                    onChange={(e) => setNewsData(prev => prev ? ({ ...prev, category: e.target.value }) : null)}
+                                    className="w-full appearance-none rounded-lg border border-slate-300 bg-white py-2.5 pl-10 pr-4 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                >
+                                    {CATEGORIES.map((cat) => (
+                                        <option key={cat} value={cat}>
+                                            {cat}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+
                         <label className="mb-2 block text-sm font-semibold text-slate-900">News Title (Bangla)</label>
                         <input
                             type="text"

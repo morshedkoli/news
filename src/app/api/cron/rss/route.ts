@@ -19,6 +19,13 @@ const SETTINGS_DOC = "rss_settings";
 const GLOBAL_INTERVAL_MINUTES = 30; // Global posting interval
 const FEED_COOLDOWN_MINUTES = 30; // Per-feed cooldown after success
 
+// Valid categories in Bangla for AI to choose from
+const VALID_CATEGORIES = [
+    "সাধারণ", "খেলাধুলা", "রাজনীতি", "প্রযুক্তি", "বিনোদন",
+    "অর্থনীতি", "স্বাস্থ্য", "বিজ্ঞান", "শিক্ষা", "আন্তর্জাতিক",
+    "জাতীয়", "জীবনযাত্রা", "মতামত", "অপরাধ", "পরিবেশ", "ধর্ম"
+];
+
 const SYSTEM_PROMPT_BANGLA = `You are a professional Bangla news editor.
 Rules:
 - Write in Bangla only
@@ -28,11 +35,15 @@ Rules:
 - Do NOT add new facts or guess missing info
 - Use short paragraphs (max 6 paragraphs, max 2 lines each)
 - Max 120 words total
+- Analyze the content and choose the most appropriate category
+
+Valid categories (choose EXACTLY one): ${VALID_CATEGORIES.join(", ")}
 
 Output format JSON ONLY:
 {
   "title": "Clean Bangla Title",
-  "summary": "Bangla Summary..."
+  "summary": "Bangla Summary...",
+  "category": "Category in Bangla from the list above"
 }`;
 
 const SYSTEM_PROMPT_ENGLISH = `You are a professional news translator and editor.
@@ -45,11 +56,15 @@ Rules:
 - Use short paragraphs (max 6 paragraphs, max 2 lines each)
 - Max 120 words total
 - Translate names and places appropriately (e.g., "Bangladesh" → "বাংলাদেশ")
+- Analyze the content and choose the most appropriate category
+
+Valid categories (choose EXACTLY one): ${VALID_CATEGORIES.join(", ")}
 
 Output format JSON ONLY:
 {
   "title": "Translated Bangla Title",
-  "summary": "Translated Bangla Summary..."
+  "summary": "Translated Bangla Summary...",
+  "category": "Category in Bangla from the list above"
 }`;
 
 /**
@@ -265,13 +280,52 @@ export async function GET(req: NextRequest) {
                             .replace(/```json/g, "")
                             .replace(/```/g, "")
                             .trim();
-                        contentJson = JSON.parse(cleanedContent);
+
+                        // Try parsing JSON first
+                        try {
+                            contentJson = JSON.parse(cleanedContent);
+                        } catch (parseErr) {
+                            console.warn("  ⚠️ JSON Parse Failed, attempting Regex fallback...");
+
+                            // Regex fallback to extract fields
+                            const titleMatch = cleanedContent.match(/"title"\s*:\s*"([^"]+)"/);
+                            const summaryMatch = cleanedContent.match(/"summary"\s*:\s*"([\s\S]*?)"\s*(,|})/);
+                            const categoryMatch = cleanedContent.match(/"category"\s*:\s*"([^"]+)"/);
+
+                            if (summaryMatch) {
+                                contentJson = {
+                                    title: titleMatch ? titleMatch[1] : article.title,
+                                    summary: summaryMatch[1].replace(/\\n/g, '\n').trim(),
+                                    category: categoryMatch ? categoryMatch[1] : null
+                                };
+                            } else {
+                                throw new Error("Failed to extract content via Regex");
+                            }
+                        }
                     } catch (e) {
                         throw new Error("Invalid JSON from AI");
                     }
 
                     if (!contentJson.title || !contentJson.summary) {
                         throw new Error("Incomplete AI response (missing title or summary)");
+                    }
+
+                    // 4. Validate Language (Must be Bangla)
+                    function containsBangla(text: string) {
+                        return /[ঀ-৿]/.test(text);
+                    }
+
+                    const isTitleBangla = containsBangla(contentJson.title);
+                    const isSummaryBangla = containsBangla(contentJson.summary);
+                    const isCategoryBangla = contentJson.category ? containsBangla(contentJson.category) : true; // Optional check for category
+
+                    if (!isTitleBangla || !isSummaryBangla) {
+                        console.warn(`  ⚠️ Validation Failed: Content is not in Bangla. Skipping.`);
+                        console.warn(`     Title Bangla: ${isTitleBangla}, Summary Bangla: ${isSummaryBangla}`);
+
+                        // Mark as failed to avoid infinite retries if possible, or just skip
+                        // We throw error so it's logged as a failure for this item
+                        throw new Error("Translation failed: Content is not in Bangla");
                     }
 
                     console.log(`  📝 AI Title: ${contentJson.title.slice(0, 50)}...`);
@@ -284,9 +338,26 @@ export async function GET(req: NextRequest) {
                         new Date()
                     );
 
-                    // Determine category: Use auto-detected from article, fallback to feed category
-                    const finalCategory = article.category || feed.category || "সাধারণ";
-                    console.log(`  📂 Category: ${finalCategory}${article.category ? ' (auto-detected)' : ' (from feed)'}`);
+                    // Determine category: Priority order:
+                    // 1. AI-detected from content analysis (most accurate)
+                    // 2. Auto-detected from article metadata
+                    // 3. Feed's default category
+                    // 4. Default "সাধারণ"
+                    let finalCategory = "সাধারণ";
+                    let categorySource = "default";
+
+                    if (contentJson.category && VALID_CATEGORIES.includes(contentJson.category)) {
+                        finalCategory = contentJson.category;
+                        categorySource = "AI-detected";
+                    } else if (article.category && VALID_CATEGORIES.includes(article.category)) {
+                        finalCategory = article.category;
+                        categorySource = "article metadata";
+                    } else if (feed.category && VALID_CATEGORIES.includes(feed.category)) {
+                        finalCategory = feed.category;
+                        categorySource = "feed config";
+                    }
+
+                    console.log(`  📂 Category: ${finalCategory} (${categorySource})`);
 
                     // Save to Firestore
                     const newsRef = await dbAdmin.collection("news").add({

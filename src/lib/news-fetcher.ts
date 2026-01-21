@@ -19,25 +19,118 @@ export type FetchResult =
  * Category mapping from English/URL patterns to Bangla
  */
 const CATEGORY_MAP: Record<string, string> = {
-    // English to Bangla
+    // English to Bangla - Common categories
+    'general': 'সাধারণ',
+    'news': 'সাধারণ',
+    'latest': 'সাধারণ',
+    'breaking': 'সাধারণ',
+    'top': 'সাধারণ',
+    'featured': 'সাধারণ',
+    'home': 'সাধারণ',
+
+    // Sports
     'sports': 'খেলাধুলা',
+    'sport': 'খেলাধুলা',
+    'cricket': 'খেলাধুলা',
+    'football': 'খেলাধুলা',
+    'games': 'খেলাধুলা',
+
+    // Politics
     'politics': 'রাজনীতি',
+    'political': 'রাজনীতি',
+    'government': 'রাজনীতি',
+    'election': 'রাজনীতি',
+
+    // Technology
     'technology': 'প্রযুক্তি',
     'tech': 'প্রযুক্তি',
+    'gadgets': 'প্রযুক্তি',
+    'digital': 'প্রযুক্তি',
+    'it': 'প্রযুক্তি',
+
+    // Entertainment
     'entertainment': 'বিনোদন',
+    'showbiz': 'বিনোদন',
+    'movies': 'বিনোদন',
+    'music': 'বিনোদন',
+    'celebrity': 'বিনোদন',
+    'bollywood': 'বিনোদন',
+    'dhallywood': 'বিনোদন',
+
+    // Economy/Business
     'business': 'অর্থনীতি',
     'economy': 'অর্থনীতি',
+    'finance': 'অর্থনীতি',
+    'market': 'অর্থনীতি',
+    'stock': 'অর্থনীতি',
+    'banking': 'অর্থনীতি',
+
+    // Health
     'health': 'স্বাস্থ্য',
+    'medical': 'স্বাস্থ্য',
+    'medicine': 'স্বাস্থ্য',
+    'healthcare': 'স্বাস্থ্য',
+
+    // Science
     'science': 'বিজ্ঞান',
+    'research': 'বিজ্ঞান',
+    'space': 'বিজ্ঞান',
+
+    // Education
     'education': 'শিক্ষা',
+    'campus': 'শিক্ষা',
+    'university': 'শিক্ষা',
+    'school': 'শিক্ষা',
+
+    // International
     'international': 'আন্তর্জাতিক',
     'world': 'আন্তর্জাতিক',
+    'global': 'আন্তর্জাতিক',
+    'foreign': 'আন্তর্জাতিক',
+    'asia': 'আন্তর্জাতিক',
+    'europe': 'আন্তর্জাতিক',
+    'america': 'আন্তর্জাতিক',
+    'middle-east': 'আন্তর্জাতিক',
+
+    // National
     'national': 'জাতীয়',
+    'bangladesh': 'জাতীয়',
+    'country': 'জাতীয়',
+    'dhaka': 'জাতীয়',
+    'local': 'জাতীয়',
+
+    // Lifestyle
     'lifestyle': 'জীবনযাত্রা',
+    'life': 'জীবনযাত্রা',
+    'living': 'জীবনযাত্রা',
+    'fashion': 'জীবনযাত্রা',
+    'food': 'জীবনযাত্রা',
+    'travel': 'জীবনযাত্রা',
+
+    // Opinion
     'opinion': 'মতামত',
     'editorial': 'সম্পাদকীয়',
+    'column': 'মতামত',
+    'letters': 'মতামত',
+
+    // Crime
+    'crime': 'অপরাধ',
+    'law': 'অপরাধ',
+    'court': 'অপরাধ',
+    'police': 'অপরাধ',
+
+    // Environment
+    'environment': 'পরিবেশ',
+    'climate': 'পরিবেশ',
+    'weather': 'পরিবেশ',
+
+    // Religion
+    'religion': 'ধর্ম',
+    'islam': 'ধর্ম',
+    'religious': 'ধর্ম',
 
     // Bangla categories (already in Bangla)
+    'সাধারণ': 'সাধারণ',
     'খেলাধুলা': 'খেলাধুলা',
     'রাজনীতি': 'রাজনীতি',
     'প্রযুক্তি': 'প্রযুক্তি',
@@ -48,6 +141,12 @@ const CATEGORY_MAP: Record<string, string> = {
     'শিক্ষা': 'শিক্ষা',
     'আন্তর্জাতিক': 'আন্তর্জাতিক',
     'জাতীয়': 'জাতীয়',
+    'জীবনযাত্রা': 'জীবনযাত্রা',
+    'মতামত': 'মতামত',
+    'সম্পাদকীয়': 'সম্পাদকীয়',
+    'অপরাধ': 'অপরাধ',
+    'পরিবেশ': 'পরিবেশ',
+    'ধর্ম': 'ধর্ম',
 };
 
 /**

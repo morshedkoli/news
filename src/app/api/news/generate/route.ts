@@ -8,6 +8,13 @@ import { FieldValue } from "firebase-admin/firestore";
 export const runtime = 'nodejs';
 export const maxDuration = 60; // Allow 60s for fetching/AI
 
+// Valid categories for AI to choose from (in Bangla)
+const VALID_CATEGORIES = [
+    "সাধারণ", "খেলাধুলা", "রাজনীতি", "প্রযুক্তি", "বিনোদন",
+    "অর্থনীতি", "স্বাস্থ্য", "বিজ্ঞান", "শিক্ষা", "আন্তর্জাতিক",
+    "জাতীয়", "জীবনযাত্রা", "মতামত", "অপরাধ", "পরিবেশ", "ধর্ম"
+];
+
 // Update System Prompt to be stricter
 // Update System Prompts for Multi-language Support
 const SYSTEM_PROMPT_BANGLA = `You are a professional Bangla news editor.
@@ -19,12 +26,16 @@ Rules:
 - Do NOT add new facts or guess missing info
 - Use short paragraphs (max 6 paragraphs, max 2 lines each)
 - Max 120 words total
+- Analyze the content and choose the most appropriate category
 - **IMPORTANT: Output strictly valid JSON. Do NOT use literal newlines inside strings. Use \\n for line breaks.**
+
+Valid categories (choose EXACTLY one): ${VALID_CATEGORIES.join(", ")}
 
 Output format JSON ONLY:
 {
   "title": "Clean Bangla Title",
-  "summary": "Bangla Summary..."
+  "summary": "Bangla Summary...",
+  "category": "Category in Bangla from the list above"
 }`;
 
 const SYSTEM_PROMPT_ENGLISH = `You are a professional news editor.
@@ -37,12 +48,16 @@ Rules:
 - Use short paragraphs (max 6 paragraphs, max 2 lines each).
 - Max 150 words total.
 - Translate names/places accurately (e.g. "Bangladesh" → "বাংলাদেশ").
+- Analyze the content and choose the most appropriate category.
 - **IMPORTANT: Output strictly valid JSON. Use \\n for line breaks.**
+
+Valid categories (choose EXACTLY one): ${VALID_CATEGORIES.join(", ")}
 
 Output format JSON ONLY:
 {
   "title": "Engaging Bangla Title",
-  "summary": "Concise Bangla Summary..."
+  "summary": "Concise Bangla Summary...",
+  "category": "Category in Bangla from the list above"
 }`;
 
 export async function POST(req: Request) {
@@ -155,12 +170,14 @@ export async function POST(req: Request) {
                         console.warn("JSON Parse Failed, attempting Regex fallback...", parseErr);
 
                         const titleMatch = clean.match(/"title"\s*:\s*"([^"]+)"/);
-                        const summaryMatch = clean.match(/"summary"\s*:\s*"([\s\S]*?)"\s*}/); // Match until closing brace
+                        const summaryMatch = clean.match(/"summary"\s*:\s*"([\s\S]*?)"\s*(,|})/);
+                        const categoryMatch = clean.match(/"category"\s*:\s*"([^"]+)"/);
 
                         if (summaryMatch) {
                             generated = {
                                 title: titleMatch ? titleMatch[1] : article.title,
-                                summary: summaryMatch[1].replace(/\\n/g, '\n').trim() // Unescape if needed
+                                summary: summaryMatch[1].replace(/\\n/g, '\n').trim(), // Unescape if needed
+                                category: categoryMatch ? categoryMatch[1] : "সাধারণ"
                             };
                         } else {
                             throw parseErr; // Regex failed too
@@ -185,7 +202,8 @@ export async function POST(req: Request) {
                     // DO NOT return raw JSON string to user
                     generated = {
                         title: article.title,
-                        summary: article.excerpt || article.textContent.substring(0, 500) + "..."
+                        summary: article.excerpt || article.textContent.substring(0, 500) + "...",
+                        category: article.category || "সাধারণ"
                     };
                 }
             } else {
@@ -196,9 +214,11 @@ export async function POST(req: Request) {
             console.warn("first attempt failed", aiError);
         }
 
-        // RETRY LOGIC: If JSON generation failed, try Plain Text mode
-        if ((!generated || !generated.summary) && language === 'English') {
-            console.log("🔄 Retry: AI JSON failed, attempting Plain Text Translation...");
+        // RETRY LOGIC: If JSON generation failed OR translation failed (still English), try Plain Text mode
+        const isGeneratedBangla = generated?.summary ? /[ঀ-৿]/.test(generated.summary) : false;
+
+        if (language === 'English' && (!generated || !generated.summary || !isGeneratedBangla)) {
+            console.log("🔄 Retry: AI JSON failed or Output is not Bangla, attempting Plain Text Translation...");
 
             try {
                 const retryPrompt = `Summarize this news in Bangla (Title + Summary).
@@ -222,7 +242,8 @@ ${textToSummarize}`;
                     if (summaryMatch) {
                         generated = {
                             title: titleMatch ? titleMatch[1].trim() : article.title,
-                            summary: summaryMatch[1].trim()
+                            summary: summaryMatch[1].trim(),
+                            category: "সাধারণ" // Plain text mode fallback
                         };
                         aiKey = retryAiKey; // specific success
                         console.log("✅ Retry Success: Translated via Plain Text mode");
@@ -238,7 +259,8 @@ ${textToSummarize}`;
             console.warn("AI Generation failed completely. Fallback to excerpt.");
             generated = {
                 title: article.title,
-                summary: article.excerpt || article.textContent.substring(0, 500) + "..."
+                summary: article.excerpt || article.textContent.substring(0, 500) + "...",
+                category: article.category || "সাধারণ"
             };
             aiKey = { providerUsed: 'Fallback', modelUsed: 'None' };
         }
