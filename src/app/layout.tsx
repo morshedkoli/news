@@ -3,7 +3,6 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/context/AuthContext";
 import AuthGuard from "@/components/AuthGuard";
-import OllamaStatus from "@/components/OllamaStatus";
 
 import { Inter, Hind_Siliguri } from "next/font/google";
 
@@ -30,7 +29,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body
         className={`${inter.variable} ${hindSiliguri.variable} font-sans antialiased bg-gray-50 text-gray-900`}
         suppressHydrationWarning={true}

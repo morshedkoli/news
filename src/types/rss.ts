@@ -15,11 +15,22 @@ export interface RssFeed {
     error_log?: string;
 }
 
-// RSS Settings - Global state for 30-minute posting interval
+// RSS Settings - Global state for configurable posting interval
 export interface RssSettings {
-    last_news_posted_at?: any; // Firestore Timestamp - Global 30-minute tracker
+    last_news_posted_at?: any; // Firestore Timestamp - Global interval tracker
     total_posts_today?: number;
     last_reset_date?: string; // For daily stats reset (YYYY-MM-DD)
+    update_interval_minutes?: number; // Configurable posting interval (default 30)
+    start_time?: string; // Start time in HH:MM format (e.g., "06:00")
+
+    // Stats & Health
+    consecutive_failed_runs?: number;
+    last_successful_run?: any;
+    avg_time_between_posts?: number;
+    last_run_at?: any;
+
+    // Cron request tracking
+    cron_requests_count?: number;
 }
 
 // RSS Item from feed parsing
@@ -28,4 +39,20 @@ export interface RssItem {
     link: string;
     pubDate: string;
     description?: string;
+}
+
+export interface RssRunLog {
+    run_id: string;
+    started_at: string; // ISO
+    finished_at: string; // ISO
+    feeds_checked: number;
+    items_checked: number;
+    post_published: boolean;
+    published_post_id?: string;
+    skip_reasons: string[];
+    ai_failures: number;
+    ai_provider_used?: string;
+    failsafe_activated: boolean;
+    run_type?: 'live' | 'dry_run';
+    duration_ms: number;
 }

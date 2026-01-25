@@ -3,14 +3,16 @@
 import { useEffect, useState } from "react";
 import { db } from "@/lib/firebase";
 import { doc, onSnapshot, setDoc, serverTimestamp } from "firebase/firestore";
-import { Save, AlertTriangle, ShieldCheck } from "lucide-react";
+import { Save, AlertTriangle, ShieldCheck, Clock } from "lucide-react";
 
 export default function GlobalSettingsPage() {
     const [config, setConfig] = useState({
         master_interval_minutes: 5,
         global_safety_delay_minutes: 5,
         require_ai_online: true,
-        max_feeds_per_cycle: 1
+        max_feeds_per_cycle: 1,
+        update_interval_minutes: 60,
+        start_time: "06:00"
     });
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState("");
@@ -23,7 +25,9 @@ export default function GlobalSettingsPage() {
                     master_interval_minutes: data.master_interval_minutes || 5,
                     global_safety_delay_minutes: data.global_safety_delay_minutes || 5,
                     require_ai_online: data.require_ai_online ?? true,
-                    max_feeds_per_cycle: data.max_feeds_per_cycle || 1
+                    max_feeds_per_cycle: data.max_feeds_per_cycle || 1,
+                    update_interval_minutes: data.update_interval_minutes ?? 60,
+                    start_time: data.start_time || "06:00"
                 });
             }
         });
@@ -68,6 +72,35 @@ export default function GlobalSettingsPage() {
                         <ShieldCheck className="w-5 h-5 text-indigo-600" />
                         Safety & Timing
                     </h2>
+
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">RSS Feed Start Time</label>
+                        <input
+                            type="time"
+                            value={config.start_time}
+                            onChange={e => setConfig({ ...config, start_time: e.target.value })}
+                            className="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-2 border"
+                        />
+                        <p className="text-xs text-slate-400 mt-1">What time should RSS feed processing start each day? (e.g., 06:00 for 6 AM)</p>
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Global Posting Interval (Minutes)</label>
+                        <input
+                            type="number" min="0" max="1440"
+                            value={config.update_interval_minutes}
+                            onChange={e => setConfig({ ...config, update_interval_minutes: parseInt(e.target.value) || 0 })}
+                            className="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-2 border"
+                        />
+                        <p className="text-xs text-slate-400 mt-1">
+                            Time between posts. Recommended: 45min (~20 posts), 60min (~16 posts), 90min (~10 posts/day).
+                        </p>
+                        {config.update_interval_minutes > 0 && (
+                            <p className="text-xs font-medium text-indigo-600 mt-1">
+                                ≈ {Math.floor(18 * 60 / config.update_interval_minutes)} posts/day (6AM-12AM)
+                            </p>
+                        )}
+                    </div>
 
                     <div>
                         <label className="block text-sm font-medium text-slate-700 mb-1">Global Safety Delay (Minutes)</label>

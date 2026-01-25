@@ -148,7 +148,8 @@ export async function POST(req: Request) {
             aiKey = await generateContent(userPrompt, {
                 systemPrompt: systemPrompt,
                 temperature: 0.2,
-                jsonMode: true
+                jsonMode: true,
+                feature: 'news_generate'
             });
 
             if (aiKey && aiKey.content) {
@@ -231,7 +232,8 @@ ${textToSummarize}`;
 
                 const retryAiKey = await generateContent(retryPrompt, {
                     systemPrompt: "You are a professional editor. Summarize English news to Bangla. Output strict 'Title: ... Summary: ...' format.",
-                    temperature: 0.1
+                    temperature: 0.1,
+                    feature: 'news_generate'
                 });
 
                 if (retryAiKey && retryAiKey.content) {

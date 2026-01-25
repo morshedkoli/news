@@ -16,9 +16,16 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+
     // RSS Feeds Collection
     // Only admins can view or modify the RSS feed list
     match /rss_feeds/{feedId} {
+      allow read, write: if isAdmin();
+    }
+
+    // RSS Run Logs Collection
+    // Only admins can view or modify the run logs
+    match /rss_run_logs/{logId} {
       allow read, write: if isAdmin();
     }
 

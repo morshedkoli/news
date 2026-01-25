@@ -13,8 +13,9 @@ import {
     updateDoc,
     serverTimestamp,
 } from "firebase/firestore";
-import { Trash2, RefreshCw, Rss, Globe, PauseCircle, PlayCircle, Clock, AlertCircle, TrendingUp } from "lucide-react";
+import { Trash2, RefreshCw, Rss, Globe, PauseCircle, PlayCircle, Clock, AlertCircle, TrendingUp, Settings } from "lucide-react";
 import { formatDistanceToNow, format, addMinutes } from "date-fns";
+import Link from "next/link";
 
 interface RssFeed {
     id: string;
@@ -34,6 +35,7 @@ interface RssSettings {
     last_news_posted_at?: any;
     total_posts_today?: number;
     last_reset_date?: string;
+    update_interval_minutes?: number;
 }
 
 import CronStatusModal from "@/components/CronStatusModal";
@@ -166,10 +168,14 @@ export default function RssPage() {
     };
 
     // Calculate next available post time
+    const getIntervalMinutes = () => settings?.update_interval_minutes ?? 30;
+
     const getNextPostTime = () => {
         if (!settings?.last_news_posted_at) return "Now";
+        const interval = getIntervalMinutes();
+        if (interval === 0) return "Now";
         const lastPost = settings.last_news_posted_at.toDate();
-        const nextPost = addMinutes(lastPost, 30);
+        const nextPost = addMinutes(lastPost, interval);
         const now = new Date();
 
         if (nextPost <= now) return "Now";
@@ -178,8 +184,10 @@ export default function RssPage() {
 
     const getMinutesUntilNext = () => {
         if (!settings?.last_news_posted_at) return 0;
+        const interval = getIntervalMinutes();
+        if (interval === 0) return 0;
         const lastPost = settings.last_news_posted_at.toDate();
-        const nextPost = addMinutes(lastPost, 30);
+        const nextPost = addMinutes(lastPost, interval);
         const now = new Date();
         const diff = Math.max(0, Math.ceil((nextPost.getTime() - now.getTime()) / (1000 * 60)));
         return diff;
@@ -274,12 +282,14 @@ export default function RssPage() {
                 <div className="flex items-start gap-3">
                     <AlertCircle className="w-5 h-5 text-indigo-600 mt-0.5" />
                     <div className="flex-1">
-                        <h4 className="font-bold text-indigo-900 mb-1">Global 30-Minute Interval</h4>
+                        <h4 className="font-bold text-indigo-900 mb-1">
+                            Auto-Posting: ~{getIntervalMinutes() > 0 ? Math.floor(18 * 60 / getIntervalMinutes()) : '∞'} posts/day
+                        </h4>
                         <p className="text-sm text-indigo-700">
-                            The system posts <strong>one article every 30 minutes</strong> from all enabled feeds.
-                            Feeds are checked by priority (highest first), then by last checked time (oldest first).
-                            Each successful feed gets a 30-minute cooldown. Set up cron-job.org to trigger
-                            <code className="mx-1 px-1 bg-indigo-100 rounded">/api/cron/rss</code> every 30 minutes.
+                            Posting <strong>every {getIntervalMinutes()} minutes</strong> from enabled feeds.
+                            Cron runs every 5 minutes via cron-job.org. Adjust interval in
+                            <a href="/rss/settings" className="mx-1 underline font-medium">RSS Settings</a>
+                            to control daily post count.
                         </p>
                     </div>
                 </div>
@@ -291,6 +301,13 @@ export default function RssPage() {
                     <h1 className="text-2xl font-bold text-slate-900">RSS Feeds</h1>
                     <p className="text-slate-500">Manage your news sources</p>
                 </div>
+                <Link
+                    href="/rss/settings"
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 font-medium rounded-lg hover:bg-slate-200 transition text-sm"
+                >
+                    <Settings className="w-4 h-4" />
+                    RSS Settings
+                </Link>
             </div>
 
             <div className="grid gap-8 lg:grid-cols-3">
@@ -334,13 +351,7 @@ export default function RssPage() {
                                     </div>
                                 </div>
 
-                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
-                                    <div className="space-y-1">
-                                        <p className="text-xs font-bold text-slate-400 uppercase">Category</p>
-                                        <p className="font-medium text-indigo-600">
-                                            {feed.category || 'সাধারণ'}
-                                        </p>
-                                    </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
                                     <div className="space-y-1">
                                         <p className="text-xs font-bold text-slate-400 uppercase">Priority</p>
                                         <p className="font-medium text-slate-700">
