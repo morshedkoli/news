@@ -24,8 +24,15 @@ export interface NewsArticle {
     duplicate_of?: string | null; // ID of the original article
     related_sources?: RelatedSource[];
 
+    // Async AI Fields
+    summary_status?: 'pending' | 'completed' | 'failed';
+    ai_provider_id?: string;
+    ai_model?: string;
+    ai_generated_at?: string;
+
     // Metadata
     created_at?: string; // Firestore Timestamp or ISO string
     category?: string;
     importance_score?: number;
+    is_rss?: boolean;
 }

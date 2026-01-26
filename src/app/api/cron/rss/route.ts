@@ -87,6 +87,7 @@ interface ProcessedCandidate {
     sourceName: string;
     feedId: string;
     feedName: string;
+    cooldownMinutes: number;
 }
 
 export async function GET(req: NextRequest) {
@@ -349,8 +350,8 @@ export async function GET(req: NextRequest) {
             const prioB = b.priority ?? 10;
             if (prioA !== prioB) return prioB - prioA;
 
-            const timeA = a.last_checked_at ? a.last_checked_at.toDate().getTime() : 0;
-            const timeB = b.last_checked_at ? b.last_checked_at.toDate().getTime() : 0;
+            const timeA = a.last_fetched_at ? (a.last_fetched_at as Timestamp).toDate().getTime() : (a.last_checked_at ? (a.last_checked_at as Timestamp).toDate().getTime() : 0);
+            const timeB = b.last_fetched_at ? (b.last_fetched_at as Timestamp).toDate().getTime() : (b.last_checked_at ? (b.last_checked_at as Timestamp).toDate().getTime() : 0);
             return timeA - timeB;
         });
 
@@ -435,14 +436,19 @@ export async function GET(req: NextRequest) {
             }, { merge: true });
 
             // Feed Cooldown
-            const feedCooldownMinutes = Math.max(30, Math.floor(GLOBAL_INTERVAL_MINUTES / 2));
-            const cooldownTime = Timestamp.fromMillis(Date.now() + feedCooldownMinutes * 60 * 1000);
+            const defaultCooldown = Math.max(30, Math.floor(GLOBAL_INTERVAL_MINUTES / 2));
+            const feedCooldownVal = candidate.cooldownMinutes || defaultCooldown;
+
+            const cooldownTime = Timestamp.fromMillis(Date.now() + feedCooldownVal * 60 * 1000);
 
             await dbAdmin.collection("rss_feeds").doc(candidate.feedId).update({
                 last_success_at: Timestamp.now(),
-                last_checked_at: Timestamp.now(),
+                last_fetched_at: Timestamp.now(), // New field
+                last_checked_at: Timestamp.now(), // Legacy field fallback
                 cooldown_until: cooldownTime,
                 failure_count: 0,
+                consecutive_failures: 0,
+                consecutive_empty_runs: 0,
                 error_log: ""
             });
 
@@ -461,17 +467,19 @@ export async function GET(req: NextRequest) {
             }
             feedsChecked++;
 
-            attempts.push(feed.name || feed.url);
-            console.log(`\n🔍 Checking Feed: ${feed.name} (${feed.url})`);
+            const feedUrl = feed.rss_url || feed.url || "";
+            const feedName = feed.source_name || feed.name || "Unknown";
+            attempts.push(feedName);
+            console.log(`\n🔍 Checking Feed: ${feedName} (${feedUrl})`);
 
             try {
                 // Parse RSS feed
-                const rssItems = await parseRssFeed(feed.url);
+                const rssItems = await parseRssFeed(feedUrl);
 
                 if (rssItems.length === 0) {
                     console.log(`  ⚠️ Feed returned no items`);
                     await updateFeedChecked(feed.id);
-                    skipReasons.push(`feed_empty:${feed.name}`);
+                    skipReasons.push(`feed_empty:${feedName}`);
                     continue;
                 }
 
@@ -543,137 +551,14 @@ export async function GET(req: NextRequest) {
                     // Detect Language
                     const isBangla = /[ঀ-৿]/.test(article.textContent.slice(0, 500));
                     const language = isBangla ? 'Bangla' : 'English';
-                    console.log(`  🌍 Language detected: ${language}`);
 
-                    // System Prompt
-                    const systemPrompt = isBangla ? SYSTEM_PROMPT_BANGLA : SYSTEM_PROMPT_ENGLISH;
-                    const userPrompt = isBangla
-                        ? `News:\n${article.textContent.slice(0, 8000)}\n\nSummarize this in Bangla following system rules.`
-                        : `English News:\n${article.textContent.slice(0, 8000)}\n\nTranslate and summarize this English news to Bangla following system rules.`;
-
-                    // === AI GENERATION WITH RETRIES ===
-                    const MAX_RETRIES = 2; // Total 3
-                    let aiSuccess = false;
-                    let contentJson: any = {};
-
-                    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-                        try {
-                            console.log(`  🤖 Generative AI Attempt ${attempt + 1}/${MAX_RETRIES + 1}...`);
-
-                            const aiRes = await generateContent(
-                                userPrompt,
-                                {
-                                    systemPrompt: systemPrompt,
-                                    temperature: 0.2 + (attempt * 0.1),
-                                    jsonMode: true,
-                                    feature: 'rss_cron'
-                                }
-                            );
-
-                            if (!aiRes?.content) {
-                                throw new Error("AI returned empty content");
-                            }
-
-                            // Capture provider
-                            if (aiRes.providerUsed) lastAiProvider = aiRes.providerUsed;
-
-                            // Parse AI response
-                            try {
-                                const cleanedContent = aiRes.content
-                                    .replace(/```json/g, "")
-                                    .replace(/```/g, "")
-                                    .trim();
-
-                                try {
-                                    contentJson = JSON.parse(cleanedContent);
-                                } catch (parseErr) {
-                                    console.warn("  ⚠️ JSON Parse Failed, attempting Regex fallback...");
-                                    const titleMatch = cleanedContent.match(/"title"\s*:\s*"([^"]+)"/);
-                                    const summaryMatch = cleanedContent.match(/"summary"\s*:\s*"([\s\S]*?)"\s*(,|})/);
-                                    const categoryMatch = cleanedContent.match(/"category"\s*:\s*"([^"]+)"/);
-
-                                    if (summaryMatch) {
-                                        contentJson = {
-                                            title: titleMatch ? titleMatch[1] : article.title,
-                                            summary: summaryMatch[1].replace(/\\n/g, '\n').trim(),
-                                            category: categoryMatch ? categoryMatch[1] : null
-                                        };
-                                    } else {
-                                        throw new Error("Failed to extract content via Regex");
-                                    }
-                                }
-                            } catch (e) {
-                                throw new Error("Invalid JSON structure");
-                            }
-
-                            if (!contentJson.title || !contentJson.summary) {
-                                throw new Error("Incomplete JSON (missing title/summary)");
-                            }
-                            // VALIDATION: Smart Language Check
-                            // 1. Must contain at least SOME Bangla characters
-                            const hasBanglaChar = /[ঀ-৿]/.test(contentJson.title) && /[ঀ-৿]/.test(contentJson.summary);
-
-                            if (!hasBanglaChar) {
-                                if (failsafeActive) {
-                                    console.warn("  ⚠️ [Failsafe] Allowing content with NO Bangla characters.");
-                                } else {
-                                    throw new Error("Content contains NO Bangla characters");
-                                }
-                            }
-
-                            // 2. "Allow mixed Bangla-English up to 30%"
-                            // match logic...
-
-                            aiSuccess = true;
-                            break;
-
-                        } catch (err: any) {
-                            console.warn(`  ⚠️ AI Attempt ${attempt + 1} failed: ${err.message}`);
-                            aiFailures++;
-                            if (attempt === MAX_RETRIES) {
-                                skipReasons.push(`ai_failed_after_retries:${err.message}`);
-                            }
-                        }
-                    }
-
-                    if (!aiSuccess) {
-                        console.error("  ❌ All AI attempts failed. Skipping item.");
-                        feedItemsSkipped++;
-                        continue;
-                    }
-
-                    console.log(`  📝 AI Title: ${contentJson.title.slice(0, 50)}...`);
-
-                    // Calculate importance score
-                    const scoreData = calculateImportanceScore(
-                        contentJson.title,
-                        contentJson.summary,
-                        cleanUrl,
-                        new Date()
-                    );
-
-                    // Determine category
-                    let finalCategory = "সাধারণ";
-                    let categorySource = "default";
-
-                    if (contentJson.category && VALID_CATEGORIES.includes(contentJson.category)) {
-                        finalCategory = contentJson.category;
-                        categorySource = "AI-detected";
-                    } else if (article.category && VALID_CATEGORIES.includes(article.category)) {
-                        finalCategory = article.category;
-                        categorySource = "article metadata";
-                    } else if (feed.category && VALID_CATEGORIES.includes(feed.category)) {
-                        finalCategory = feed.category;
-                        categorySource = "feed config";
-                    }
-
-                    console.log(`  📂 Category: ${finalCategory} (${categorySource})`);
-
+                    // === NON-BLOCKING FLOW ===
+                    // Instead of waiting for AI, we save immediately and queue for AI
                     const candidate: ProcessedCandidate = {
-                        title: contentJson.title,
-                        summary: contentJson.summary,
-                        category: finalCategory,
-                        score: scoreData.score,
+                        title: article.title, // Use original title initially
+                        summary: article.textContent.slice(0, 200) + "...", // Temp snippet
+                        category: article.category || (isBangla ? "সাধারণ" : "General"),
+                        score: 50, // Default score, will be updated by AI later? Or we skip scoring for now.
                         image: article.image || "",
                         sourceUrl: item.link,
                         cleanUrl: cleanUrl,
@@ -681,109 +566,169 @@ export async function GET(req: NextRequest) {
                         contentHash: contentHash,
                         sourceName: article.siteName || new URL(item.link).hostname,
                         feedId: feed.id,
-                        feedName: feed.name || feed.url
+                        feedName: feed.source_name || feed.name || "Unknown",
+                        cooldownMinutes: feed.cooldown_minutes || 30
                     };
 
-                    // === STRATEGY EVALUATION ===
-                    const HIGH_QUALITY_THRESHOLD = 70;
+                    // For the 'pending' flow, we treat everything as a candidate to be published 
+                    // IF it passes basic filters.
+                    // But wait, the original logic had `candidates` list and scoring. 
+                    // Without AI, we don't have a good score.
+                    // We should probably just publish the *first* valid item we find to keep it simple and fast.
+                    // The old logic: "Check top 5 items" -> "Score" -> "Publish Best".
+                    // New logic: "Check items" -> "First valid is good enough?" 
+                    // Or "Fetch 5, simple heuristic score?"
+                    // Let's stick to: Publish the first valid one we find to minimize fetching.
 
-                    if (candidate.score >= HIGH_QUALITY_THRESHOLD) {
-                        console.log(`  🌟 High Quality Item found (Score: ${candidate.score}). Posting immediately.`);
-                        await publishCandidate(candidate, 'high_quality_match');
+                    console.log(`  🚀 Immediate Publish (AI Pending): ${candidate.title.slice(0, 50)}...`);
+
+                    if (dryRun) {
+                        console.log(`🧪 [DRY RUN] Would publish: ${candidate.title}`);
+                        posted = true;
+                        postedReason = "dry_run_pending_ai";
+                        postedFeed = candidate.feedName;
+                        postedNewsId = "dry-id";
                         break;
-                    } else {
-                        console.log(`  📥 Buffering Candidate (Score: ${candidate.score}). Continuing search...`);
-                        candidates.push(candidate);
-                        feedCandidateFound = true;
                     }
+
+                    // 1. Commit to DB
+                    const newsRef = await dbAdmin.collection("news").add({
+                        title: candidate.title,
+                        summary: candidate.summary, // Placeholder
+                        content: article.textContent, // Save full content for AI to read later
+                        image: candidate.image,
+                        source_url: candidate.sourceUrl,
+                        normalized_url: candidate.cleanUrl,
+                        normalized_url_hash: candidate.urlHash,
+                        content_hash: candidate.contentHash,
+                        source_name: candidate.sourceName,
+                        published_at: new Date().toISOString(),
+                        created_at: new Date().toISOString(),
+                        category: candidate.category,
+                        is_rss: true,
+                        importance_score: 50, // Temporary
+
+                        // Async Fields
+                        summary_status: 'pending'
+                    });
+
+                    console.log(`  💾 Saved to Firestore: ${newsRef.id}`);
+
+                    // 2. Notification (Immediate)
+                    const notifHash = crypto.createHash('sha256').update(newsRef.id).digest('hex');
+                    const notifRef = dbAdmin.collection("sent_notifications").doc(notifHash);
+                    const notifDoc = await notifRef.get();
+
+                    if (!notifDoc.exists) {
+                        // Send Push with Title involved
+                        const notifResult = await sendNotification(
+                            "New Article Found",
+                            candidate.title, // Use title as body
+                            newsRef.id
+                        );
+                        if (notifResult) {
+                            console.log(`  ✅ Notification sent`);
+                            await notifRef.set({ post_id: newsRef.id, sent_at: Timestamp.now(), hash: notifHash });
+                        }
+                    }
+
+                    // Update stats
+                    const currentStats = (await settingsRef.get()).data() as RssSettings;
+                    const totalPosted = (currentStats?.total_posts_today || 0) + 1;
+
+                    await settingsRef.set({
+                        last_news_posted_at: Timestamp.now(),
+                        total_posts_today: totalPosted,
+                        last_reset_date: today
+                    }, { merge: true });
+
+                    // Feed Cooldown
+                    const feedCooldownMinutes = Math.max(30, Math.floor(GLOBAL_INTERVAL_MINUTES / 2));
+                    const cooldownTime = Timestamp.fromMillis(Date.now() + feedCooldownMinutes * 60 * 1000);
+
+                    await dbAdmin.collection("rss_feeds").doc(candidate.feedId).update({
+                        last_success_at: Timestamp.now(),
+                        last_checked_at: Timestamp.now(),
+                        cooldown_until: cooldownTime,
+                        failure_count: 0,
+                        error_log: ""
+                    });
+
+                    posted = true;
+                    postedReason = "success_pending_ai";
+                    postedFeed = candidate.feedName;
+                    postedNewsId = newsRef.id;
+                    break; // Exit item loop
                 } // End Item Loop
 
-                if (posted) break;
+                if (posted) break; // Exit feed loop
 
-                // If no new items found, update checked time
-                if (!feedCandidateFound) {
-                    console.log(`  ⚠️ No new items in this feed`);
+                // If we didn't post, mark checked
+                if (!posted) {
                     await updateFeedChecked(feed.id);
-                    skipReasons.push(`feed_no_new_items:${feed.name} (${feedItemsSkipped} skipped)`);
+                    skipReasons.push(`feed_no_valid_new_items:${feed.source_name || feed.name}`);
                 }
 
             } catch (err) {
-                console.error(`❌ Error processing feed ${feed.name}:`, err);
-                skipReasons.push(`feed_error:${feed.name}`);
-
+                // ... existing error catch ...
+                console.error(`❌ Error processing feed ${feed.source_name || feed.name}:`, err);
+                skipReasons.push(`feed_error:${feed.source_name || feed.name}`);
                 const errorMsg = err instanceof Error ? err.message : String(err);
                 await dbAdmin.collection("rss_feeds").doc(feed.id).update({
+                    last_fetched_at: Timestamp.now(),
                     last_checked_at: Timestamp.now(),
                     error_log: errorMsg,
+                    consecutive_failures: (feed.consecutive_failures || 0) + 1,
                     failure_count: (feed.failure_count || 0) + 1
                 });
             }
         } // End Feed Loop
 
-        // === FALLBACK: If nothing posted, check candidates ===
-        if (!posted && candidates.length > 0) {
-            console.log(`\n🤔 No High-Quality items found. Checking buffered candidates...`);
-            candidates.sort((a, b) => b.score - a.score);
-            const best = candidates[0];
-
-            // PRIORITY OVERRIDE
-            const originalScore = best.score;
-            best.category = "সাধারণ";
-            best.score = Math.min(best.score, 60);
-
-            console.log(`  💎 Best Candidate: ${best.title} (Original Score: ${originalScore.toFixed(1)} -> Capped: ${best.score})`);
-            console.log(`  🏷️ Category Overridden to: ${best.category}`);
-
-            await publishCandidate(best, 'fallback_best_candidate_capped');
-        }
+        // Removed "Candidates logic" because we publish the first good one immediately now.
 
         // 6. RETURN RESULT
         const duration = ((Date.now() - start) / 1000).toFixed(2);
 
         if (posted) {
+            // ... existing success return ...
             logDecision('POSTING', postedReason);
-            console.log(`\n✅ Cron completed in ${duration}s - Posted from ${postedFeed}`);
-            await finalizeRun(true, [postedReason], postedNewsId, dryRun, failsafeActive, lastAiProvider);
+            await finalizeRun(true, [postedReason], postedNewsId, dryRun, failsafeActive, null);
             return NextResponse.json({
-                status: "posted",
+                status: "posted_pending_ai", // distinct status
                 feed: postedFeed,
                 newsId: postedNewsId,
-                score: candidates.find(c => c.cleanUrl === candidates[0]?.cleanUrl)?.score, // Approx
                 reason: postedReason,
                 duration_seconds: parseFloat(duration),
                 total_posts_today: (settings.total_posts_today || 0) + 1
             });
-        } else {
+        }
+        else {
+            // ... existing failure return ...
             console.log(`\n⚠️ Cron completed in ${duration}s - No news posted`);
             logDecision('SKIPPED', 'no_valid_items_found', skipReasons);
-            await finalizeRun(false, skipReasons, null, dryRun, failsafeActive, lastAiProvider);
+            await finalizeRun(false, skipReasons, null, dryRun, failsafeActive, null);
             return NextResponse.json({
                 status: "checked_all",
                 result: "no_new_articles",
-                attempts: attempts,
                 duration_seconds: parseFloat(duration),
                 skipped_reasons: skipReasons
             });
         }
 
     } catch (error: any) {
+        // ... existing error catch ...
         console.error("💥 Cron Fatal Error:", error);
         logDecision('SKIPPED', 'fatal_error', [error.message]);
-
-        try {
-            await finalizeRun(false, ['fatal_error: ' + error.message]);
-        } catch (e) { console.error("Failed to log fatal error to DB", e); }
-
-        return NextResponse.json({
-            error: error.message,
-            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-        }, { status: 500 });
+        await finalizeRun(false, ['fatal_error: ' + error.message]);
+        return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
 
 async function updateFeedChecked(feedId: string) {
     await dbAdmin.collection("rss_feeds").doc(feedId).update({
-        last_checked_at: Timestamp.now()
+        last_fetched_at: Timestamp.now(),
+        last_checked_at: Timestamp.now(),
+        consecutive_empty_runs: FieldValue.increment(1)
     });
 }
 

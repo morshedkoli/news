@@ -1,18 +1,34 @@
 // RSS Feed interface - Simplified for global 30-minute interval system
+// RSS Feed interface - Enhanced for robust tracking
 export interface RssFeed {
     id: string;
-    name: string;
-    url: string;
+    source_name: string; // Display Name (was name)
+    rss_url: string;     // URL (was url)
     enabled: boolean;
+    priority: number;    // 1-10
+
+    // Metadata
+    language: 'bn' | 'en';
+    country: 'BD' | 'US' | 'INTL';
+    source_type: 'direct' | 'aggregator'; // Aggregator needs stronger dedupe
     category?: string;
-    priority: number; // Higher number = higher priority (default 10)
+
+    // Configuration
+    cooldown_minutes: number; // Waiting time between fetches
 
     // State Tracking
-    last_checked_at?: any; // Firestore Timestamp
-    last_success_at?: any; // Firestore Timestamp
-    cooldown_until?: any; // Firestore Timestamp (30 min after success)
-    failure_count?: number;
+    last_fetched_at?: any;      // Timestamp (replaces last_checked_at)
+    last_checked_at?: any;      // Legacy Compatibility
+    last_success_at?: any;      // Timestamp
+    cooldown_until?: any;       // Firestore Timestamp (Temporary block)
+    consecutive_failures?: number;
+    failure_count?: number;     // Legacy alias
+    consecutive_empty_runs?: number;
     error_log?: string;
+
+    // Legacy mapping (optional, for backward compat if needed)
+    name?: string;
+    url?: string;
 }
 
 // RSS Settings - Global state for configurable posting interval

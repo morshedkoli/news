@@ -1,102 +1,158 @@
-import { db } from "@/lib/firebase";
-import { collection, query, where, getDocs, orderBy, limit, Timestamp } from "firebase/firestore";
-import { subDays, startOfDay, endOfDay, format } from "date-fns";
+import { dbAdmin } from "@/lib/firebase-admin";
+import { RssFeed } from "@/types/rss";
+import { DashboardData } from "@/types/analytics";
 
-export interface DashboardStats {
-    totalNews: number;
-    todayNews: number;
-    totalLikes: number;
-    todayViews: number;
-    trendingNews: any[];
-    sourcePerformance: any[];
-    notificationStats: {
-        sentToday: number;
-        avgScore: number;
-        ctr: number; // Click Through Rate (simulated or real if tracking exists)
-    };
-    hourlyViews: any[];
-}
+export async function getAnalyticsData(): Promise<DashboardData> {
+    const now = new Date();
+    const startOfDay = new Date(now);
+    startOfDay.setHours(0, 0, 0, 0);
 
-export async function fetchDashboardStats(): Promise<DashboardStats> {
-    const todayStart = startOfDay(new Date());
-    const todayEnd = endOfDay(new Date());
+    const sevenDaysAgo = new Date(now);
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-    // 1. Overview Stats
-    // Note: For large collections, use aggregation queries or counters. 
-    // Here we use simple queries for MVP (assuming < 10k docs for now)
-    const newsRef = collection(db, "news");
+    // 1. Parallel Fetch
+    const [
+        newsTodaySnap,
+        newsSevenDaysSnap,
+        runsTodaySnap,
+        feedsSnap,
+        statsSnap
+    ] = await Promise.all([
+        dbAdmin.collection("news")
+            .where("published_at", ">=", startOfDay.toISOString())
+            .get(),
+        dbAdmin.collection("news")
+            .where("published_at", ">=", sevenDaysAgo.toISOString())
+            .get(),
+        dbAdmin.collection("rss_run_logs")
+            .where("started_at", ">=", startOfDay.toISOString())
+            .orderBy("started_at", "desc")
+            .get(),
+        dbAdmin.collection("rss_feeds").get(),
+        dbAdmin.collection("system_stats").doc("rss_settings").get()
+    ]);
 
-    // Total News (Optimized: Count aggregation would be better)
-    const totalNewsSnapshot = await getDocs(query(newsRef, orderBy("published_at", "desc"), limit(1000)));
-    const totalNews = totalNewsSnapshot.size;
+    // 2. Process Summary
+    const postsToday = newsTodaySnap.size;
+    const target = 15;
+    const activeFeeds = feedsSnap.docs.filter(d => d.data().enabled).length;
 
-    // Today's News
-    const qToday = query(newsRef, where("published_at", ">=", Timestamp.fromDate(todayStart)), where("published_at", "<=", Timestamp.fromDate(todayEnd)));
-    const todayNewsSnapshot = await getDocs(qToday);
-    const todayNews = todayNewsSnapshot.size;
+    // Cron Stats
+    const totalRuns = runsTodaySnap.size;
+    const failedRuns = runsTodaySnap.docs.filter(d => {
+        const data = d.data();
+        return !data.post_published && data.skip_reasons?.some((r: string) => r.includes('error') || r.includes('failed'));
+    }).length;
 
-    // Likes & Views Aggregation
-    let totalLikes = 0;
-    let todayViews = 0; // In a real app, views would be in a subcollection or separate analytics store
+    const successRate = totalRuns > 0 ? ((totalRuns - failedRuns) / totalRuns) * 100 : 100;
 
-    // 2. Performance Aggregation
-    const sourceMap: Record<string, { posts: number, likes: number }> = {};
-    const trendingList: any[] = [];
+    // System Status
+    let systemStatus: 'healthy' | 'degraded' | 'stalled' = 'healthy';
+    if (failedRuns > 5 || postsToday === 0 && now.getHours() > 12) {
+        systemStatus = 'degraded';
+    }
+    const statsData = statsSnap.data() || {};
+    if (statsData.consecutive_failed_runs > 5) {
+        systemStatus = 'stalled';
+    }
 
-    totalNewsSnapshot.forEach(doc => {
-        const data = doc.data();
-        totalLikes += (data.likes || 0);
+    // 3. Process Posting Charts
+    // Hourly
+    const hourlyMap = new Map<number, number>();
+    for (let i = 0; i < 24; i++) hourlyMap.set(i, 0);
 
-        // Mocking views for demo schema if not present
-        const views = data.views || Math.floor(Math.random() * 500);
-
-        // For Trending
-        if (trendingList.length < 10) {
-            trendingList.push({ id: doc.id, ...data, views });
-        }
-
-        // Source Stats
-        const source = data.source_name || "Unknown";
-        if (!sourceMap[source]) sourceMap[source] = { posts: 0, likes: 0 };
-        sourceMap[source].posts++;
-        sourceMap[source].likes += (data.likes || 0);
+    newsTodaySnap.docs.forEach(doc => {
+        const date = new Date(doc.data().published_at);
+        const hour = date.getHours();
+        hourlyMap.set(hour, (hourlyMap.get(hour) || 0) + 1);
     });
 
-    // 3. Notification Stats (Simulated based on 'importance_score')
-    // In production, you'd query the 'notifications' collection
-    const notifiedNews = totalNewsSnapshot.docs.filter(d => d.data().importance_score >= 70);
-    const sentToday = notifiedNews.filter(d => d.data().published_at.toDate() >= todayStart).length;
-    const avgScore = notifiedNews.reduce((acc, curr) => acc + curr.data().importance_score, 0) / (notifiedNews.length || 1);
-
-
-    // 4. Source Performance Chart Data
-    const sourcePerformance = Object.entries(sourceMap)
-        .map(([name, stats]) => ({
-            name,
-            posts: stats.posts,
-            avgLikes: Math.round(stats.likes / stats.posts)
-        }))
-        .sort((a, b) => b.posts - a.posts)
-        .slice(0, 5);
-
-    // 5. Hourly Views (Mocked for visualization as strict hourly tracking requires big data structure)
-    const hourlyViews = Array.from({ length: 24 }, (_, i) => ({
-        hour: `${i}:00`,
-        views: Math.floor(Math.random() * 100) + (i > 18 ? 200 : 50) // Higher in evening
+    const hourlyChart = Array.from(hourlyMap.entries()).map(([hour, count]) => ({
+        hour: `${hour}:00`,
+        count
     }));
 
+    // Daily
+    const dailyMap = new Map<string, number>();
+    newsSevenDaysSnap.docs.forEach(doc => {
+        const date = new Date(doc.data().published_at);
+        const key = `${date.getMonth() + 1}/${date.getDate()}`;
+        dailyMap.set(key, (dailyMap.get(key) || 0) + 1);
+    });
+
+    // Fill gaps
+    const dailyChart = [];
+    for (let i = 6; i >= 0; i--) {
+        const d = new Date(now);
+        d.setDate(d.getDate() - i);
+        const key = `${d.getMonth() + 1}/${d.getDate()}`;
+        dailyChart.push({
+            date: key,
+            count: dailyMap.get(key) || 0
+        });
+    }
+
+    const avgPostsPerDay = Math.round(newsSevenDaysSnap.size / 7);
+
+    // 4. Process Feeds
+    const feeds = feedsSnap.docs.map(doc => {
+        const data = doc.data() as RssFeed;
+        let health: 'healthy' | 'warning' | 'error' = 'healthy';
+
+        if (data.consecutive_failures && data.consecutive_failures > 3) health = 'error';
+        else if (data.consecutive_empty_runs && data.consecutive_empty_runs > 10) health = 'warning';
+        else if (!data.enabled) health = 'warning'; // Or just separate status? Keep simple.
+
+        return {
+            id: doc.id,
+            name: data.source_name || data.name || "Unknown",
+            itemsPosted: 0, // Hard to calculate without costly query. Omit/Placeholder.
+            status: health,
+            lastPost: data.last_success_at ? data.last_success_at.toDate().toISOString() : null,
+            failureCount: data.consecutive_failures || 0
+        };
+    });
+
+    // 5. Generate Insights
+    const insights: string[] = [];
+    if (postsToday < target && now.getHours() > 20) {
+        insights.push(`📉 Target Miss Risk: Only ${postsToday}/${target} posts. Consider forcing a run.`);
+    }
+    if (failedRuns > 3) {
+        insights.push(`⚠️ High Failure Rate: ${failedRuns} failures today. Check logs.`);
+    }
+    const errorFeeds = feeds.filter(f => f.status === 'error');
+    if (errorFeeds.length > 0) {
+        insights.push(`🔴 broken feeds detected: ${errorFeeds.map(f => f.name).join(', ')}`);
+    }
+    if (statsData.last_news_posted_at) {
+        const lastPost = statsData.last_news_posted_at.toDate();
+        const diffHours = (now.getTime() - lastPost.getTime()) / (1000 * 3600);
+        if (diffHours > 4) {
+            insights.push(`⏰ System Stale: No posts for ${diffHours.toFixed(1)} hours.`);
+        }
+    }
+
     return {
-        totalNews,
-        todayNews,
-        totalLikes,
-        todayViews: Math.floor(totalLikes * 5.5), // Heuristic estimate if views not tracked
-        trendingNews: trendingList.sort((a, b) => b.likes - a.likes).slice(0, 5),
-        sourcePerformance,
-        notificationStats: {
-            sentToday,
-            avgScore: Math.round(avgScore),
-            ctr: 12.5 // Mock CTR
+        summary: {
+            postsToday,
+            target,
+            successRate: Math.round(successRate),
+            systemStatus,
+            activeFeeds,
+            aiUsageCount: 0 // TODO: Implement AI usage tracking
         },
-        hourlyViews
+        posting: {
+            hourly: hourlyChart,
+            daily: dailyChart,
+            avgPostsPerDay
+        },
+        cron: {
+            runs: runsTodaySnap.docs.slice(0, 20).map(d => ({ id: d.id, ...d.data() } as any)),
+            totalRuns,
+            failedRuns
+        },
+        feeds: feeds.sort((a, b) => (a.status === 'error' ? -1 : 1)), // Errors first
+        insights
     };
 }

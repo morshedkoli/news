@@ -1,4 +1,25 @@
-export type AiProviderType = 'local' | 'openai-compatible';
+export interface AiModelConfig {
+    id: string; // e.g., 'mistral-7b', 'gemini-flash'
+    name: string; // Display Name
+    enabled: boolean;
+    priority: number; // 1 = High, 10 = Low
+
+    // Health Tracking (Per Model)
+    healthScore?: number;
+    healthStatus?: 'healthy' | 'degraded' | 'unhealthy';
+    healthReason?: string;
+    pausedUntil?: string;
+
+    stats?: {
+        totalRequests: number;
+        successRate: number;
+        avgLatencyMs: number;
+        lastUpdated: string;
+    };
+
+    costPerInputToken?: number;
+    costPerOutputToken?: number;
+}
 
 export interface AiProvider {
     id: string;
@@ -7,32 +28,44 @@ export interface AiProvider {
     type: 'local' | 'openai-compatible' | 'custom';
     provider_category: 'free' | 'paid' | 'local';
     endpoint: string;
-    apiKey?: string;
-    model: string;
-    priority: number;
-    enabled: boolean;
-    lastStatus: 'online' | 'offline' | 'unknown';
-    lastChecked?: string;
-    description?: string;
+    apiKey?: string; // Stored securely
+    method?: 'POST' | 'GET'; // Restored
 
-    // Generic Configuration
-    // Template Configuration
-    method: 'POST' | 'GET'; // Default POST
-    headers?: Record<string, string>; // Headers template
-    body_template?: any; // JSON body with {{PROMPT}} macros
-    response_path?: string; // e.g. "choices[0].message.content"
-    success_condition?: string; // e.g. "response.choices.length > 0"
+    // Model Configuration (Multi-Model Support)
+    models?: AiModelConfig[];
+
+    // Legacy / Deprecated (will migrate to models[])
+    model: string;
+
+    // ... existing fields ...
+    priority?: number;
+    enabled?: boolean;
     timeout_ms?: number;
 
-    // Health Tracking (New)
+    headers?: Record<string, string>;
+    body_template?: any;
+    success_condition?: string;
+    response_path?: string;
+
+    // Provider-Level Health (Aggregated or Gateway Health)
     failureCount?: number;
     lastFailureAt?: string;
     lastError?: string;
-    isHealthy?: boolean; // false = degraded, auto-disabled
+    isHealthy?: boolean;
 
-    // Cost Tracking (New)
-    costPerInputToken?: number;
-    costPerOutputToken?: number;
+    // Health Score System (0-100)
+    healthScore?: number;
+    healthStatus?: 'healthy' | 'degraded' | 'unhealthy';
+    healthReason?: string;
+    pausedUntil?: string;
+
+    // Provider Stats
+    stats?: {
+        totalRequests: number;
+        successRate: number;
+        avgLatencyMs: number;
+        lastUpdated: string;
+    };
 }
 
 export interface AiResponse {
