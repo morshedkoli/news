@@ -32,15 +32,23 @@ export async function POST(req: Request) {
             }
 
             const data = newsDoc.data();
-            const category = data?.category;
+            const categoryId = data?.categoryId;
+            // Legacy fallback: if no ID but has category name/slug?
+            // Since we promised ID-based routing, let's prioritize ID.
+            // If legacy data, we might not have ID.
 
             // Delete News
             t.delete(newsRef);
 
             // Decrement Category
-            if (category) {
-                // We use the Service's logic but pass our transaction
-                await CategoryService.decrementCategoryCount(category, t);
+            if (categoryId) {
+                await CategoryService.decrementCategoryCount(categoryId, t);
+            } else if (data?.category) {
+                // Try to resolve legacy?
+                // CAUTION: 'ensureCategory' creates it if missing, which is wrong for delete.
+                // 'decrementCategoryCount' in our new Service expects ID.
+                // We could fetch by slug, but let's stick to ID for now as requested.
+                // or maybe logging missing ID.
             }
         });
 

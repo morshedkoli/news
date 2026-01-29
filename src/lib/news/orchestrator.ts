@@ -209,31 +209,45 @@ export class NewsFetchOrchestrator {
     }
 
     private async publish(candidate: ArticleCandidate, contentHash: string, urlHash: string): Promise<string> {
+        let categoryId, categorySlug;
+
+        // Resolve Category First
+        if (candidate.category) {
+            try {
+                const { CategoryService } = await import('../categories');
+                const catData = await CategoryService.ensureCategory(candidate.category);
+                categoryId = catData.id;
+                categorySlug = catData.slug;
+
+                await CategoryService.incrementCategoryCount(catData.id);
+            } catch (e) {
+                console.warn("Orchestrator Category Error:", e);
+            }
+        }
+
         const ref = await dbAdmin.collection('news').add({
             title: candidate.title,
             summary: candidate.summary || "Pending Summary",
             content: candidate.content,
             image: candidate.image || "",
             source_url: candidate.sourceUrl,
+            // ...
             normalized_url: candidate.cleanUrl,
             normalized_url_hash: urlHash,
             content_hash: contentHash,
             source_name: candidate.sourceName,
             published_at: new Date().toISOString(),
             created_at: new Date().toISOString(),
+            // Store both name and ID info
             category: candidate.category || "General",
+            categoryId: categoryId || null,
+            categorySlug: categorySlug || null,
+
             is_rss: true,
             source_type: 'auto_fetch',
             summary_status: 'pending',
             importance_score: 50
         });
-
-        // Update Category Stats
-        if (candidate.category) {
-            const { CategoryService } = await import('../categories');
-            // We don't want to block the orchestrator too much, but it's better to be safe
-            await CategoryService.incrementCategoryCount(candidate.category);
-        }
 
         // Notify
         await sendNotification(candidate.title, "New Update", ref.id);

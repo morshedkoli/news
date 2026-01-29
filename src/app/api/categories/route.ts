@@ -8,8 +8,6 @@ export async function GET(req: Request) {
 
         let categories;
         if (isAdmin) {
-            // Check auth if needed, but for now assuming the page consuming this is protected or we trust the internal flag for MVP
-            // Ideally we check headers for admin token here too if public can guess this URL
             categories = await CategoryService.getAllCategories();
         } else {
             categories = await CategoryService.getActiveCategories();

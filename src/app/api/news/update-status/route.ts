@@ -37,6 +37,8 @@ export async function POST(req: Request) {
             // The frontend sends the DESIRED state (published: true/false).
             // We should check current state.
 
+            const categoryId = data?.categoryId;
+
             const currentPublished = !!data?.published_at;
 
             if (published === currentPublished) {
@@ -46,14 +48,14 @@ export async function POST(req: Request) {
             if (published) {
                 // Publishing
                 t.update(newsRef, { published_at: FieldValue.serverTimestamp() });
-                if (category) {
-                    await CategoryService.incrementCategoryCount(category, t);
+                if (categoryId) {
+                    await CategoryService.incrementCategoryCount(categoryId, t);
                 }
             } else {
                 // Unpublishing
                 t.update(newsRef, { published_at: null });
-                if (category) {
-                    await CategoryService.decrementCategoryCount(category, t);
+                if (categoryId) {
+                    await CategoryService.decrementCategoryCount(categoryId, t);
                 }
             }
         });

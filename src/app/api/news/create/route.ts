@@ -24,7 +24,6 @@ export async function POST(req: Request) {
         }
 
         // Check if user is actually an admin in Firestore
-        // Note: This matches the logic from notifications/send/route.ts
         const adminDoc = await dbAdmin.collection('admins').doc(decodedToken.email || '').get();
         if (!adminDoc.exists) {
             console.warn(`Access denied for ${decodedToken.email}: Not in admins collection`);
@@ -44,10 +43,10 @@ export async function POST(req: Request) {
         const normalized_url_hash = generateUrlHash(normalized_url);
         const content_hash = generateContentHash(summary);
 
-        // 3. Save to Firestore (Admin SDK)
+        // 3. Prepare Data
         console.log(`Creating news: ${title} by ${created_by}`);
 
-        const docRef = await dbAdmin.collection("news").add({
+        const newsData: any = {
             title,
             summary,
             image: image || "",
@@ -62,19 +61,29 @@ export async function POST(req: Request) {
             published_at: FieldValue.serverTimestamp(),
             created_at: FieldValue.serverTimestamp(),
             is_rss: false
-        });
+        };
 
-        // Update Category Stats
-        // We do this asynchronously/independently or await it. 
-        // Since we are not in a transaction here (add is simple), we can just await it.
+        // Resolve Category
         if (category) {
-            const { CategoryService } = await import('@/lib/categories');
-            await CategoryService.incrementCategoryCount(category);
+            try {
+                const { CategoryService } = await import('@/lib/categories');
+                const catData = await CategoryService.ensureCategory(category);
+
+                newsData.categoryId = catData.id;
+                newsData.categorySlug = catData.slug;
+
+                // Immediately increment stats
+                await CategoryService.incrementCategoryCount(catData.id);
+            } catch (err) {
+                console.warn("Category resolution failed:", err);
+            }
         }
 
+        // 4. Save to Firestore
+        const docRef = await dbAdmin.collection("news").add(newsData);
         console.log(`News created with ID: ${docRef.id}`);
 
-        // 4. Trigger Push Notification (Server-Side)
+        // 5. Trigger Push Notification (Server-Side)
         let notificationSent = false;
         try {
             console.log(`Attempting to send notification for ${docRef.id}...`);
@@ -91,7 +100,7 @@ export async function POST(req: Request) {
             notificationSent = false;
         }
 
-        // 5. Return Success with Notification Status
+        // 6. Return Success
         return NextResponse.json({
             success: true,
             id: docRef.id,
