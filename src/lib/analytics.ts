@@ -94,6 +94,20 @@ export async function getAnalyticsData(): Promise<DashboardData> {
 
     const avgPostsPerDay = Math.round(newsSevenDaysSnap.size / 7);
 
+    // Source Counts (Last 7 Days)
+    const sourceMap = new Map<string, number>();
+    newsSevenDaysSnap.docs.forEach(doc => {
+        const data = doc.data();
+        // Use source_name (often from scraper) or fellback to 'RSS' if missing
+        // For unified system: source_name should be populated.
+        const source = data.source_name || "Unknown";
+        sourceMap.set(source, (sourceMap.get(source) || 0) + 1);
+    });
+
+    const sourceCounts = Array.from(sourceMap.entries())
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count); // Top sources first
+
     // 4. Process Feeds
     const feeds = feedsSnap.docs.map(doc => {
         const data = doc.data() as RssFeed;
@@ -145,6 +159,7 @@ export async function getAnalyticsData(): Promise<DashboardData> {
         posting: {
             hourly: hourlyChart,
             daily: dailyChart,
+            sourceCounts,
             avgPostsPerDay
         },
         cron: {

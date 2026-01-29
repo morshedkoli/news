@@ -12,6 +12,7 @@ export interface DashboardData {
     posting: {
         hourly: { hour: string; count: number }[];
         daily: { date: string; count: number }[];
+        sourceCounts: { name: string; count: number }[]; // New
         avgPostsPerDay: number;
     };
     cron: {

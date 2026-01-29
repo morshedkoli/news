@@ -133,9 +133,9 @@ export default function AnalyticsPage() {
             </div>
 
             {/* Charts Section */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Hourly Trend */}
-                <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+                <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
                     <h3 className="font-semibold text-gray-900 mb-6">Posting Activity (Hourly)</h3>
                     <div className="h-[300px] w-full">
                         <ResponsiveContainer width="100%" height="100%">
@@ -158,6 +158,32 @@ export default function AnalyticsPage() {
                                     cursor={{ fill: '#F3F4F6' }}
                                 />
                                 <Bar dataKey="count" fill="#6366F1" radius={[4, 4, 0, 0]} barSize={20} />
+                            </BarChart>
+                        </ResponsiveContainer>
+                    </div>
+                </div>
+
+                {/* Source Distribution */}
+                <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+                    <h3 className="font-semibold text-gray-900 mb-6">Top News Sources (7 Days)</h3>
+                    <div className="h-[300px] w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart layout="vertical" data={data?.posting.sourceCounts.slice(0, 10)}>
+                                <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#E5E7EB" />
+                                <XAxis type="number" hide />
+                                <YAxis
+                                    dataKey="name"
+                                    type="category"
+                                    width={100}
+                                    tick={{ fontSize: 11, fill: '#6B7280' }}
+                                    axisLine={false}
+                                    tickLine={false}
+                                />
+                                <Tooltip
+                                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                                    cursor={{ fill: '#F3F4F6' }}
+                                />
+                                <Bar dataKey="count" fill="#8B5CF6" radius={[0, 4, 4, 0]} barSize={20} />
                             </BarChart>
                         </ResponsiveContainer>
                     </div>
@@ -236,12 +262,12 @@ export default function AnalyticsPage() {
                                             </span>
                                         ) : (
                                             <div className="flex flex-wrap gap-1">
-                                                {run.skip_reasons.slice(0, 2).map((reason: string, i: number) => (
+                                                {(run.skip_reasons || []).slice(0, 2).map((reason: string, i: number) => (
                                                     <span key={i} className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs border border-gray-200">
                                                         {reason}
                                                     </span>
                                                 ))}
-                                                {run.skip_reasons.length > 2 && (
+                                                {(run.skip_reasons || []).length > 2 && (
                                                     <span className="text-xs text-gray-400">+{run.skip_reasons.length - 2}</span>
                                                 )}
                                             </div>
