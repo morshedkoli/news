@@ -1,0 +1,60 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Check if the authenticated user is listed in the 'admins' collection.
+    // NOTE: This assumes admin documents are keyed by email address.
+    function isAdmin() {
+      return request.auth != null && exists(/databases/$(database)/documents/admins/$(request.auth.token.email));
+    }
+
+    // News Collection
+    // Public can read, but you might want to filter only published news in your queries.
+    // The rules allow reading any document if knew the ID, or listing them.
+    match /news/{newsId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+
+    // RSS Feeds Collection
+    // Only admins can view or modify the RSS feed list
+    match /rss_feeds/{feedId} {
+      allow read, write: if isAdmin();
+    }
+
+    // RSS Run Logs Collection
+    // Only admins can view or modify the run logs
+    match /rss_run_logs/{logId} {
+      allow read, write: if isAdmin();
+    }
+
+    // System Stats (Progress, Notifications)
+    match /system_stats/{statId} {
+      allow read, write: if isAdmin();
+    }
+
+    // AI Providers Configuration
+    match /ai_providers/{providerId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Ads Configuration
+    match /system_ads/{adId} {
+      allow read, write: if isAdmin();
+    }
+
+    // App Configuration (Version Control, etc.)
+    match /app_config/{configId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Admins Collection
+    // Only the admin themselves can read their doc (for verification)
+    match /admins/{email} {
+      allow read: if request.auth != null && request.auth.token.email == email;
+      allow write: if false; // Prevent modification via Client SDK
+    }
+  }
+}
