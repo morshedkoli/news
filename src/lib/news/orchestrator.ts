@@ -228,6 +228,13 @@ export class NewsFetchOrchestrator {
             importance_score: 50
         });
 
+        // Update Category Stats
+        if (candidate.category) {
+            const { CategoryService } = await import('../categories');
+            // We don't want to block the orchestrator too much, but it's better to be safe
+            await CategoryService.incrementCategoryCount(candidate.category);
+        }
+
         // Notify
         await sendNotification(candidate.title, "New Update", ref.id);
         return ref.id;

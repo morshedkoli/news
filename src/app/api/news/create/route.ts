@@ -64,6 +64,14 @@ export async function POST(req: Request) {
             is_rss: false
         });
 
+        // Update Category Stats
+        // We do this asynchronously/independently or await it. 
+        // Since we are not in a transaction here (add is simple), we can just await it.
+        if (category) {
+            const { CategoryService } = await import('@/lib/categories');
+            await CategoryService.incrementCategoryCount(category);
+        }
+
         console.log(`News created with ID: ${docRef.id}`);
 
         // 4. Trigger Push Notification (Server-Side)
