@@ -45,10 +45,15 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
                         setIsAdmin(false);
                         router.push("/login?error=unauthorized");
                     }
-                } catch (error) {
+                } catch (error: any) {
                     console.error("Error checking admin status:", error);
                     setUser(null);
                     setIsAdmin(false);
+                    // Check for permission-denied error specifically
+                    if (error?.code === 'permission-denied' || error?.message?.includes('Missing or insufficient permissions')) {
+                        await firebaseSignOut(auth);
+                        router.push("/login?error=permission-error");
+                    }
                 }
             } else {
                 setUser(null);

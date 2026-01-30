@@ -3,6 +3,7 @@ export interface ArticleCandidate {
     summary?: string;
     content?: string; // HTML or Text
     textContent?: string;
+    excerpt?: string;
     image?: string;
     sourceUrl: string; // The specific article URL
     cleanUrl: string;  // Normalized URL
@@ -25,8 +26,8 @@ export interface NewsSource {
     name: string;
 
     /**
-     * Fetch a single candidate article from this source.
-     * Should return null if no valid candidate is found.
+     * Fetch candidate articles from this source.
+     * Returns an array of candidates, sorted by relevance/date.
      */
-    fetchCandidate(): Promise<ArticleCandidate | null>;
+    fetchCandidates(): Promise<ArticleCandidate[]>;
 }

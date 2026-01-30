@@ -47,6 +47,10 @@ export interface RssSettings {
 
     // Cron request tracking
     cron_requests_count?: number;
+
+    // Temporary State
+    temp_disabled_sources?: string[];
+    global_lock_until?: any; // Timestamp
 }
 
 // RSS Item from feed parsing
@@ -71,4 +75,8 @@ export interface RssRunLog {
     failsafe_activated: boolean;
     run_type?: 'live' | 'dry_run';
     duration_ms: number;
+    tried_sources?: string[];
+    source_used?: string;
+    success?: boolean;
+    exit_reason?: string;
 }

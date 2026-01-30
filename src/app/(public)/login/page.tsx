@@ -1,18 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "@/lib/firebase";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Lock, Mail } from "lucide-react";
 import Skeleton from "@/components/Skeleton";
 
-export default function LoginPage() {
+function LoginForm() {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
     const router = useRouter();
+    const searchParams = useSearchParams();
+    const urlError = searchParams.get("error");
+
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -85,6 +88,16 @@ export default function LoginPage() {
                         <div className="text-center text-sm text-red-600">{error}</div>
                     )}
 
+                    {/* Show explicit permission error if present in URL */}
+                    {(urlError === 'unauthorized' || urlError === 'permission-error') && !error && (
+                        <div className="text-center text-sm text-red-600">
+                            {urlError === 'permission-error' ?
+                                "Security rules blocked access. Please deploy firestore.rules." :
+                                "Insufficient permissions. You are not authorized to access the admin panel."
+                            }
+                        </div>
+                    )}
+
                     <div>
                         <button
                             type="submit"
@@ -110,5 +123,21 @@ export default function LoginPage() {
                 </form>
             </div>
         </div>
+    );
+}
+
+export default function LoginPage() {
+    return (
+        <Suspense fallback={
+            <div className="flex min-h-screen items-center justify-center bg-gray-100 p-4">
+                <div className="w-full max-w-md">
+                    <Skeleton height={32} width={320} />
+                    <Skeleton height={20} width={400} />
+                    <Skeleton height={180} />
+                </div>
+            </div>
+        }>
+            <LoginForm />
+        </Suspense>
     );
 }

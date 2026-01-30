@@ -47,12 +47,31 @@ export async function getAnalyticsData(): Promise<DashboardData> {
     const successRate = totalRuns > 0 ? ((totalRuns - failedRuns) / totalRuns) * 100 : 100;
 
     // System Status
-    let systemStatus: 'healthy' | 'degraded' | 'stalled' = 'healthy';
-    if (failedRuns > 5 || postsToday === 0 && now.getHours() > 12) {
+    let systemStatus: 'healthy' | 'degraded' | 'stalled' | 'manual' = 'healthy';
+    const statsData = statsSnap.data() || {};
+
+    // Time-based Health Check (Primary Signal)
+    if (statsData.last_news_posted_at) {
+        const lastPostTime = statsData.last_news_posted_at.toDate().getTime();
+        const minsSinceLastPost = (now.getTime() - lastPostTime) / 60000;
+
+        if (minsSinceLastPost > 120) {
+            systemStatus = 'stalled';
+        } else if (minsSinceLastPost > 40) {
+            systemStatus = 'degraded';
+        } else {
+            systemStatus = 'healthy';
+        }
+    } else {
+        // No posts ever? Or just reset?
+        if (failedRuns > 5) systemStatus = 'stalled';
+    }
+
+    // Secondary Failure Check (Override to Degraded/Stalled if high failures)
+    if (failedRuns > 8 && systemStatus !== 'stalled') {
         systemStatus = 'degraded';
     }
-    const statsData = statsSnap.data() || {};
-    if (statsData.consecutive_failed_runs > 5) {
+    if (statsData.consecutive_failed_runs > 10) {
         systemStatus = 'stalled';
     }
 
@@ -127,24 +146,112 @@ export async function getAnalyticsData(): Promise<DashboardData> {
         };
     });
 
-    // 5. Generate Insights
-    const insights: string[] = [];
-    if (postsToday < target && now.getHours() > 20) {
-        insights.push(`📉 Target Miss Risk: Only ${postsToday}/${target} posts. Consider forcing a run.`);
-    }
-    if (failedRuns > 3) {
-        insights.push(`⚠️ High Failure Rate: ${failedRuns} failures today. Check logs.`);
-    }
-    const errorFeeds = feeds.filter(f => f.status === 'error');
-    if (errorFeeds.length > 0) {
-        insights.push(`🔴 broken feeds detected: ${errorFeeds.map(f => f.name).join(', ')}`);
-    }
+    // 5. Deep System Analysis
+    // statsData is already defined above (deduplicated)
+    const lockUntil = statsData.global_lock_until ? statsData.global_lock_until.toDate() : null;
+    const isLocked = lockUntil && lockUntil.getTime() > now.getTime();
+
+    // Lock Status
+    const lockStatus = {
+        active: !!isLocked,
+        expiresAt: lockUntil ? lockUntil.toISOString() : null,
+        ttlSeconds: isLocked ? Math.round((lockUntil.getTime() - now.getTime()) / 1000) : 0
+    };
+
+    // Performance Metrics
+    const recentRuns = runsTodaySnap.docs.map(d => d.data() as any);
+    const totalAiFailures = recentRuns.reduce((acc, run) => acc + (run.ai_failures || 0), 0);
+    const dedupExits = recentRuns.filter(r => r.exit_reason?.includes('duplicate')).length; // Approximate
+    const retriesTriggered = recentRuns.filter(r => r.tried_sources && r.tried_sources.length > 1).length;
+
+    const performance = {
+        dedupRate: totalRuns > 0 ? Math.round((dedupExits / totalRuns) * 100) : 0,
+        aiFailureRate: totalRuns > 0 ? Math.round((totalAiFailures / totalRuns) * 100) : 0,
+        retriesTriggered
+    };
+
+    // System Status Logic (Enhanced)
     if (statsData.last_news_posted_at) {
-        const lastPost = statsData.last_news_posted_at.toDate();
-        const diffHours = (now.getTime() - lastPost.getTime()) / (1000 * 3600);
-        if (diffHours > 4) {
-            insights.push(`⏰ System Stale: No posts for ${diffHours.toFixed(1)} hours.`);
+        const lastPostTime = statsData.last_news_posted_at.toDate().getTime();
+        const minsSinceLastPost = (now.getTime() - lastPostTime) / 60000;
+
+        if (minsSinceLastPost > 120) {
+            systemStatus = 'stalled';
+        } else if (minsSinceLastPost > 45) {
+            systemStatus = 'degraded';
         }
+    } else if (failedRuns > 5) {
+        systemStatus = 'stalled';
+    }
+
+    if (statsData.consecutive_failed_runs > 10) {
+        systemStatus = 'manual'; // Too many failures, needs human look
+    }
+
+    // Next Window Calculation
+    let nextPostWindow = "Now";
+    if (systemStatus === 'healthy' && statsData.last_news_posted_at) {
+        const lastPost = statsData.last_news_posted_at.toDate();
+        const nextTime = new Date(lastPost.getTime() + 30 * 60000); // 30m interval
+        const diffMins = Math.round((nextTime.getTime() - now.getTime()) / 60000);
+        if (diffMins > 0) nextPostWindow = `in ${diffMins} mins`;
+        else nextPostWindow = "Overdue";
+    }
+
+    // 6. Actionable Insights
+    const insights: { type: 'info' | 'warning' | 'critical'; message: string; action?: string }[] = [];
+
+    // Stalled / Manual
+    if (systemStatus === 'stalled' || systemStatus === 'manual') {
+        insights.push({
+            type: 'critical',
+            message: `System stalled! No posts for > 2 hours.`,
+            action: 'trigger_run'
+        });
+    }
+
+    // Target Miss
+    if (postsToday < target && now.getHours() > 18) {
+        const deficit = target - postsToday;
+        insights.push({
+            type: 'warning',
+            message: `Behind daily target by ${deficit} posts.`,
+            action: 'trigger_run'
+        });
+    }
+
+    // Locked Support
+    if (isLocked) {
+        insights.push({
+            type: 'info',
+            message: `Pipeline active (Locked for ${Math.round(lockStatus.ttlSeconds / 60)}m).`,
+        });
+    }
+
+    // Dedup Warning
+    if (performance.dedupRate > 80) {
+        insights.push({
+            type: 'warning',
+            message: `High Dedup Rate (${performance.dedupRate}%). Filters might be too strict.`,
+            action: 'check_settings'
+        });
+    }
+
+    // AI Warning
+    if (performance.aiFailureRate > 50) {
+        insights.push({
+            type: 'warning',
+            message: `AI Provider failing often (${performance.aiFailureRate}%). Check billing/quota.`,
+            action: 'check_ai'
+        });
+    }
+
+    // Source Balance
+    if (sourceCounts.length > 0 && sourceCounts[0].count === postsToday && postsToday > 5) {
+        insights.push({
+            type: 'info',
+            message: `Single source dominance: ${sourceCounts[0].name} provided 100% of posts.`,
+        });
     }
 
     return {
@@ -154,7 +261,8 @@ export async function getAnalyticsData(): Promise<DashboardData> {
             successRate: Math.round(successRate),
             systemStatus,
             activeFeeds,
-            aiUsageCount: 0 // TODO: Implement AI usage tracking
+            aiUsageCount: 0,
+            nextPostWindow
         },
         posting: {
             hourly: hourlyChart,
@@ -162,12 +270,26 @@ export async function getAnalyticsData(): Promise<DashboardData> {
             sourceCounts,
             avgPostsPerDay
         },
+        system: {
+            lockStatus,
+            consecutiveFailures: statsData.consecutive_failed_runs || 0,
+            lastRunStatus: recentRuns[0]?.exit_reason || "unknown",
+            lastRunTime: recentRuns[0]?.started_at || ""
+        },
+        performance,
         cron: {
-            runs: runsTodaySnap.docs.slice(0, 20).map(d => ({ id: d.id, ...d.data() } as any)),
+            runs: runsTodaySnap.docs.slice(0, 20).map(d => {
+                const data = d.data();
+                return {
+                    id: d.id,
+                    ...data,
+                    success: !!(data.post_published || data.success)
+                } as any;
+            }),
             totalRuns,
             failedRuns
         },
-        feeds: feeds.sort((a, b) => (a.status === 'error' ? -1 : 1)), // Errors first
+        feeds: feeds.sort((a, b) => (a.status === 'error' ? -1 : 1)),
         insights
     };
 }

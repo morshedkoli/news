@@ -5,15 +5,29 @@ export interface DashboardData {
         postsToday: number;
         target: number;
         successRate: number;
-        systemStatus: 'healthy' | 'degraded' | 'stalled';
+        systemStatus: 'healthy' | 'degraded' | 'stalled' | 'manual'; // Added 'manual'
         activeFeeds: number;
         aiUsageCount: number;
+        nextPostWindow?: string; // New
     };
     posting: {
         hourly: { hour: string; count: number }[];
         daily: { date: string; count: number }[];
-        sourceCounts: { name: string; count: number }[]; // New
+        sourceCounts: { name: string; count: number }[];
         avgPostsPerDay: number;
+    };
+    // New Section: Deep System Health
+    system: {
+        lockStatus: { active: boolean; expiresAt: string | null; ttlSeconds: number };
+        consecutiveFailures: number;
+        lastRunStatus: string;
+        lastRunTime: string;
+    };
+    // New Section: Performance Metrics
+    performance: {
+        dedupRate: number; // % of items rejected as duplicates
+        aiFailureRate: number; // % of AI summaries failed
+        retriesTriggered: number;
     };
     cron: {
         runs: (RssRunLog & { id: string })[];
@@ -28,5 +42,5 @@ export interface DashboardData {
         lastPost: string | null;
         failureCount: number;
     }[];
-    insights: string[];
+    insights: { type: 'info' | 'warning' | 'critical'; message: string; action?: string }[]; // Enhanced insights
 }

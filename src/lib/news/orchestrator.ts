@@ -1,12 +1,9 @@
+import { ActionCodeSettings } from 'firebase-admin/auth';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { NewsSource, ArticleCandidate } from './sources/news-source';
-import { GoogleNewsSource } from './sources/google-news';
-import { DirectWebSource } from './sources/direct-scraper';
 import { RssSource } from './sources/rss-source';
-import { fetchArticle } from '../news-fetcher';
-import { checkDuplicate, generateContentHash, generateUrlHash } from '../news-dedup';
 import { dbAdmin } from '../firebase-admin';
 import { sendNotification } from '../notifications';
-import { Timestamp, FieldValue } from 'firebase-admin/firestore';
 import crypto from 'crypto';
 
 interface RunResult {
@@ -18,7 +15,7 @@ interface RunResult {
 }
 
 export class NewsFetchOrchestrator {
-    private sources: NewsSource[] = [];
+    private rssSource: RssSource;
     private runId: string;
     private startTime: number;
     private log = console.log;
@@ -26,160 +23,91 @@ export class NewsFetchOrchestrator {
     constructor() {
         this.runId = crypto.randomUUID();
         this.startTime = Date.now();
-
-        // Initialize Sources in Priority Order
-        this.sources = [
-            new GoogleNewsSource(),
-            new DirectWebSource(),
-            new RssSource()
-        ].sort((a, b) => a.priority - b.priority);
+        this.rssSource = new RssSource();
     }
 
     async run(force = false, dryRun = false): Promise<RunResult> {
-        this.log(`[Orchestrator] Run ${this.runId} started. Force=${force}, Dry=${dryRun}`);
+        this.log(`[Orchestrator] Run ${this.runId} started. Mode=RSS_ONLY`);
 
-        // 1. Load State (Disabled Sources Mask)
-        const settingsRef = dbAdmin.collection("system_stats").doc("rss_settings");
-        const settingsSnap = await settingsRef.get();
-        const settings = settingsSnap.data() || {};
+        // 1. Fetch Candidates (RSS Only)
+        // RssSource now handles feed selection/rotation internally
+        const candidates = await this.rssSource.fetchCandidates();
 
-        // List of source IDs that failed in previous runs (and haven't been reset by a success)
-        let disabledSources: string[] = settings.temp_disabled_sources || [];
-
-        // Filter sources
-        let candidates = this.sources.filter(s => s.enabled && !disabledSources.includes(s.id));
-
-        // If all candidates are disabled (Chain Completed without success), Reset and Retry Primary
         if (candidates.length === 0) {
-            this.log(`[Orchestrator] All sources were temporarily disabled. Resetting chain.`);
-            disabledSources = [];
-            candidates = this.sources.filter(s => s.enabled);
+            return this.finish(false, undefined, undefined, 'no_candidates_found');
         }
 
-        // Pick Top Priority
-        if (candidates.length === 0) {
-            return this.finish(false, undefined, undefined, 'no_sources_available');
-        }
-
-        const source = candidates[0]; // Logic: Top priority available
-
-        this.log(`[Orchestrator] Selected Source: ${source.name} (Priority ${source.priority})`);
-
-        // Check global timeout (45s safety)
-        if (Date.now() - this.startTime > 45000) {
-            return this.finish(false, undefined, undefined, 'global_timeout');
-        }
-
-        try {
-            // 2. Fetch Candidate
-            const candidate = await source.fetchCandidate();
-
-            if (!candidate) {
-                this.log(`[Orchestrator] Source ${source.name} returned no candidate.`);
-
-                // Mark as disabled for next run
-                if (!dryRun) {
-                    await settingsRef.set({
-                        temp_disabled_sources: FieldValue.arrayUnion(source.id)
-                    }, { merge: true });
-                }
-
-                return this.finish(false, source.name, undefined, 'source_empty');
+        // 2. Process Candidates
+        for (const candidate of candidates) {
+            // A. Deduplication (Strict)
+            const urlHash = this.generateUrlHash(candidate.cleanUrl);
+            if (await this.checkUrlDuplicate(urlHash)) {
+                this.log(`[Orchestrator] URL Duplicate: ${candidate.title}`);
+                continue;
             }
 
-            this.log(`[Orchestrator] Candidate found: ${candidate.title || candidate.sourceUrl}`);
+            const contentHash = this.generateContentHash(candidate.title + (candidate.summary || ""));
 
-            // 3. Dedup Check (URL)
-            const urlHash = generateUrlHash(candidate.cleanUrl);
-            const isUrlDuplicate = await this.checkUrlDuplicate(urlHash);
-            if (isUrlDuplicate) {
-                this.log(`[Orchestrator] Duplicate URL detected. Skipping.`);
-                // Treat duplicate same as "Empty" -> Move to next source next time
-                if (!dryRun) {
-                    await settingsRef.set({
-                        temp_disabled_sources: FieldValue.arrayUnion(source.id)
-                    }, { merge: true });
-                }
-                return this.finish(false, source.name, undefined, 'duplicate_url');
-            }
-
-            // 4. Fetch Content (if missing or thin)
+            // B. Enrich Content (Non-Blocking)
             let fullContent = candidate.content || "";
-            let textContent = candidate.textContent || "";
-            let image = candidate.image;
-            let title = candidate.title;
-
-            if (!fullContent || fullContent.length < 200) {
-                this.log(`[Orchestrator] Fetching full article content...`);
-                const fetchResult = await fetchArticle(candidate.sourceUrl);
-                if (fetchResult.success && fetchResult.data) {
-                    fullContent = fetchResult.data.content;
-                    textContent = fetchResult.data.textContent;
-                    image = image || fetchResult.data.image || undefined;
-                    title = title || fetchResult.data.title;
-
-                    candidate.title = title;
-                    candidate.content = fullContent;
-                    candidate.textContent = textContent;
-                    candidate.image = image;
-                } else {
-                    this.log(`[Orchestrator] Content fetch failed.`);
-                    // Treat as failure -> Disable source
-                    if (!dryRun) {
-                        await settingsRef.set({
-                            temp_disabled_sources: FieldValue.arrayUnion(source.id)
-                        }, { merge: true });
+            if (!fullContent && candidate.sourceUrl) {
+                try {
+                    const { fetchArticle } = await import('../news-fetcher');
+                    const fetchResult = await fetchArticle(candidate.sourceUrl);
+                    if (fetchResult.success) {
+                        fullContent = fetchResult.data.content;
+                        candidate.content = fetchResult.data.content;
+                        candidate.excerpt = fetchResult.data.excerpt;
+                        if (!candidate.image && fetchResult.data.image) candidate.image = fetchResult.data.image;
                     }
-                    return this.finish(false, source.name, undefined, 'content_fetch_failed');
+                } catch (e) {
+                    this.log(`[Orchestrator] Content Fetch Failed (Non-fatal): ${e}`);
                 }
             }
 
-            // 5. Dedup Check (Content)
-            const contentHash = generateContentHash(textContent);
-            const isContentDuplicate = await this.checkContentDuplicate(contentHash);
-            if (isContentDuplicate) {
-                this.log(`[Orchestrator] Duplicate Content detected.`);
-                if (!dryRun) {
-                    await settingsRef.set({
-                        temp_disabled_sources: FieldValue.arrayUnion(source.id)
-                    }, { merge: true });
+            // C. AI Summary (Non-Blocking)
+            let summary = candidate.summary || "Pending Summary";
+            let aiStatus = 'skipped';
+
+            if (fullContent || candidate.summary) {
+                try {
+                    const aiModule = await import('../ai-engine');
+                    const aiResult = await aiModule.generateContent(
+                        `Summarize this news article in 2-3 sentences max. Language: Bengali (if content is Bengali) or English. Content: ${fullContent || candidate.summary}`
+                        , { feature: 'news_summary' });
+
+                    if (aiResult?.content) {
+                        summary = aiResult.content;
+                        aiStatus = 'success';
+                        candidate.summary = summary;
+                    }
+                } catch (e) {
+                    this.log(`[Orchestrator] AI Summary Failed (Non-fatal): ${e}`);
+                    aiStatus = 'failed';
+                    summary = candidate.summary || candidate.excerpt || "Summary unavailable";
                 }
-                return this.finish(false, source.name, undefined, 'duplicate_content');
             }
 
-            // 6. Post (Publish)
-            if (dryRun) {
-                this.log(`[DryRun] Would publish: ${title}`);
-                return this.finish(true, source.name, 'dry-run-id', 'success');
+            // D. Publish
+            try {
+                // Ensure we pass the updated summary
+                candidate.summary = summary;
+
+                const newsId = await this.publish(candidate, contentHash, urlHash, aiStatus);
+                this.log(`[Orchestrator] Published: ${candidate.title} (${newsId})`);
+
+                if (candidate.feedId) {
+                    await this.updateFeedSuccess(candidate.feedId);
+                }
+
+                return this.finish(true, 'rss', newsId, 'success');
+            } catch (e) {
+                this.log(`[Orchestrator] Publish Failed: ${e}`);
+                continue;
             }
-
-            const newsId = await this.publish(candidate, contentHash, urlHash);
-
-            // 7. Success! Clear the disabled chain
-            await settingsRef.set({
-                temp_disabled_sources: [], // Reset chain
-                last_successful_run: Timestamp.now(),
-                total_posts_today: FieldValue.increment(1)
-            }, { merge: true });
-
-            // 8. RSS Cooldown Update
-            if (candidate.feedId) {
-                await this.updateRssCooldown(candidate.feedId, candidate.cooldownMinutes || 30);
-            }
-
-            return this.finish(true, source.name, newsId, 'success');
-
-        } catch (e: any) {
-            console.error(`[Orchestrator] Error with source ${source.name}:`, e);
-
-            // Mark as disabled for next run
-            if (!dryRun) {
-                await settingsRef.set({
-                    temp_disabled_sources: FieldValue.arrayUnion(source.id)
-                }, { merge: true });
-            }
-            return this.finish(false, source.name, undefined, 'source_error');
         }
+
+        return this.finish(false, 'rss', undefined, 'all_candidates_skipped_or_failed');
     }
 
     private async finish(success: boolean, source: string | undefined, newsId: string | undefined, reason: string): Promise<RunResult> {
@@ -189,12 +117,12 @@ export class NewsFetchOrchestrator {
             started_at: new Date(this.startTime).toISOString(),
             duration_ms: Date.now() - this.startTime,
             success,
-            source_used: source || null,
+            source_used: source || 'rss',
             exit_reason: reason,
-            posted_news_id: newsId || null
+            posted_news_id: newsId || null,
+            tried_sources: ['rss']
         });
 
-        this.log(`[Orchestrator] Finished. Success=${success} Reason=${reason}`);
         return { success, sourceUsed: source, newsId, exitReason: reason, durationMs: Date.now() - this.startTime };
     }
 
@@ -203,69 +131,76 @@ export class NewsFetchOrchestrator {
         return !snap.empty;
     }
 
-    private async checkContentDuplicate(hash: string): Promise<boolean> {
-        const snap = await dbAdmin.collection('news').where('content_hash', '==', hash).limit(1).get();
-        return !snap.empty;
+    private generateUrlHash(url: string): string {
+        return crypto.createHash('md5').update(url).digest('hex');
     }
 
-    private async publish(candidate: ArticleCandidate, contentHash: string, urlHash: string): Promise<string> {
+    private generateContentHash(text: string): string {
+        return crypto.createHash('md5').update(text).digest('hex');
+    }
+
+    private async publish(candidate: ArticleCandidate, contentHash: string, urlHash: string, aiStatus: string): Promise<string> {
         let categoryId: string | undefined;
         let categorySlug: string | undefined;
         const categoryName = candidate.category || "General";
 
-        // Resolve Category First (REQUIRED)
+        // Resolve Category
         try {
             const { CategoryService } = await import('../categories');
             const catData = await CategoryService.ensureCategory(categoryName);
             categoryId = catData.id;
             categorySlug = catData.slug;
-
-            if (!categoryId || !categorySlug) {
-                throw new Error("Resolved category has missing ID or Slug");
-            }
-
             await CategoryService.incrementCategoryCount(catData.id);
         } catch (e) {
             console.error("Orchestrator Category Error:", e);
-            throw new Error(`Publish rejected: Failed to resolve category '${categoryName}'. ${e}`);
+            throw new Error(`Category resolution failed: ${e}`);
         }
 
         const ref = await dbAdmin.collection('news').add({
             title: candidate.title,
-            summary: candidate.summary || "Pending Summary",
-            content: candidate.content,
+            summary: candidate.summary || candidate.excerpt || "Click to read more...",
+            content: candidate.content || "",
             image: candidate.image || "",
             source_url: candidate.sourceUrl,
-            // ...
             normalized_url: candidate.cleanUrl,
             normalized_url_hash: urlHash,
             content_hash: contentHash,
             source_name: candidate.sourceName,
             published_at: new Date().toISOString(),
             created_at: new Date().toISOString(),
-
-            // Store both name and ID info (Enforced)
             category: categoryName,
-            category_name: categoryName, // Legacy alias if needed
-            categoryId: categoryId,
-            categorySlug: categorySlug,
-
+            category_name: categoryName,
+            categoryId,
+            categorySlug,
             is_rss: true,
-            source_type: 'auto_fetch',
-            summary_status: 'pending',
-            importance_score: 50
+            source_type: 'rss_fetch',
+            summary_status: aiStatus === 'success' ? 'complete' : 'pending',
+            ai_status: aiStatus,
+            importance_score: 50,
+            likes: 0
         });
 
-        // Notify
-        await sendNotification(candidate.title, "New Update", ref.id);
+        // Update Global Stats (triggers Cooldown)
+        await dbAdmin.collection("system_stats").doc("rss_settings").update({
+            last_news_posted_at: Timestamp.now(),
+            total_posts_today: FieldValue.increment(1),
+            consecutive_failed_runs: 0
+        });
+
+        // Notify App Users
+        try {
+            await sendNotification(candidate.title, candidate.summary || "New News Available", ref.id);
+        } catch (e) {
+            console.error("Failed to send notification:", e);
+        }
+
         return ref.id;
     }
 
-    private async updateRssCooldown(feedId: string, minutes: number) {
-        const cooldownTime = Timestamp.fromMillis(Date.now() + minutes * 60 * 1000);
+    private async updateFeedSuccess(feedId: string) {
         await dbAdmin.collection("rss_feeds").doc(feedId).update({
             last_success_at: Timestamp.now(),
-            cooldown_until: cooldownTime
+            consecutive_failures: 0
         });
     }
 }

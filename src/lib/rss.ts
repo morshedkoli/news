@@ -7,7 +7,7 @@ export async function parseRssFeed(feedUrl: string): Promise<RssItem[]> {
     try {
         const response = await fetch(feedUrl, {
             headers: {
-                "User-Agent": "Mozilla/5.0 (compatible; BanglaNewsBot/1.0)",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             },
             signal: AbortSignal.timeout(10000) // 10s timeout
         });

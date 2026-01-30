@@ -85,9 +85,13 @@ export default function AnalyticsPage() {
                         <h3 className="font-semibold text-indigo-900">Action Required</h3>
                         <ul className="mt-1 space-y-1">
                             {data.insights.map((insight, idx) => (
-                                <li key={idx} className="text-sm text-indigo-800 flex items-center gap-2">
-                                    <div className="w-1.5 h-1.5 rounded-full bg-indigo-400" />
-                                    {insight}
+                                <li key={idx} className={`text-sm flex items-center gap-2 ${insight.type === 'critical' ? 'text-red-800' :
+                                        insight.type === 'warning' ? 'text-amber-800' : 'text-indigo-800'
+                                    }`}>
+                                    <div className={`w-1.5 h-1.5 rounded-full ${insight.type === 'critical' ? 'bg-red-400' :
+                                            insight.type === 'warning' ? 'bg-amber-400' : 'bg-indigo-400'
+                                        }`} />
+                                    {insight.message}
                                 </li>
                             ))}
                         </ul>
