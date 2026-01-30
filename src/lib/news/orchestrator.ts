@@ -209,20 +209,25 @@ export class NewsFetchOrchestrator {
     }
 
     private async publish(candidate: ArticleCandidate, contentHash: string, urlHash: string): Promise<string> {
-        let categoryId, categorySlug;
+        let categoryId: string | undefined;
+        let categorySlug: string | undefined;
+        const categoryName = candidate.category || "General";
 
-        // Resolve Category First
-        if (candidate.category) {
-            try {
-                const { CategoryService } = await import('../categories');
-                const catData = await CategoryService.ensureCategory(candidate.category);
-                categoryId = catData.id;
-                categorySlug = catData.slug;
+        // Resolve Category First (REQUIRED)
+        try {
+            const { CategoryService } = await import('../categories');
+            const catData = await CategoryService.ensureCategory(categoryName);
+            categoryId = catData.id;
+            categorySlug = catData.slug;
 
-                await CategoryService.incrementCategoryCount(catData.id);
-            } catch (e) {
-                console.warn("Orchestrator Category Error:", e);
+            if (!categoryId || !categorySlug) {
+                throw new Error("Resolved category has missing ID or Slug");
             }
+
+            await CategoryService.incrementCategoryCount(catData.id);
+        } catch (e) {
+            console.error("Orchestrator Category Error:", e);
+            throw new Error(`Publish rejected: Failed to resolve category '${categoryName}'. ${e}`);
         }
 
         const ref = await dbAdmin.collection('news').add({
@@ -238,10 +243,12 @@ export class NewsFetchOrchestrator {
             source_name: candidate.sourceName,
             published_at: new Date().toISOString(),
             created_at: new Date().toISOString(),
-            // Store both name and ID info
-            category: candidate.category || "General",
-            categoryId: categoryId || null,
-            categorySlug: categorySlug || null,
+
+            // Store both name and ID info (Enforced)
+            category: categoryName,
+            category_name: categoryName, // Legacy alias if needed
+            categoryId: categoryId,
+            categorySlug: categorySlug,
 
             is_rss: true,
             source_type: 'auto_fetch',

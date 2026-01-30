@@ -32,7 +32,16 @@ export interface NewsArticle {
 
     // Metadata
     created_at?: string; // Firestore Timestamp or ISO string
+
+    /** @deprecated Use categoryId and categorySlug instead */
     category?: string;
+
+    /** @deprecated Use categoryId and categorySlug instead */
+    category_name?: string;
+
+    categoryId: string;
+    categorySlug: string;
+
     importance_score?: number;
     is_rss?: boolean;
 }
