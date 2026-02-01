@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { db } from '@/lib/firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { auth } from '@/lib/firebase';
 import { AppAdConfig, AdPositionConfig } from '@/types/ads';
 import { toast } from 'react-hot-toast';
 import Skeleton from "@/components/Skeleton";
@@ -25,10 +24,12 @@ export default function AdsPage() {
 
     const fetchConfig = async () => {
         try {
-            const docRef = doc(db, 'system_ads', 'config');
-            const snap = await getDoc(docRef);
-            if (snap.exists()) {
-                setConfig(snap.data() as AppAdConfig);
+            const res = await fetch('/api/app-config/ads');
+            if (res.ok) {
+                const data = await res.json();
+                setConfig(data as AppAdConfig);
+            } else {
+                throw new Error('Failed to load ad config');
             }
         } catch (error) {
             console.error(error);
@@ -41,11 +42,20 @@ export default function AdsPage() {
     const handleSave = async () => {
         setSaving(true);
         try {
-            const docRef = doc(db, 'system_ads', 'config');
-            await setDoc(docRef, {
-                ...config,
-                last_updated: new Date().toISOString()
+            const token = await auth.currentUser?.getIdToken();
+            const res = await fetch('/api/app-config/ads', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify(config)
             });
+
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err?.error || 'Failed to save ad config');
+            }
             toast.success("Ad configuration saved!");
         } catch (error) {
             console.error(error);

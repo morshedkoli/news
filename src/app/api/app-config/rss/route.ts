@@ -5,7 +5,7 @@ import { RssSettings } from "@/types/rss";
 export const revalidate = 0; // Disable Vercel cache for real-time updates
 
 const DEFAULT_CONFIG: RssSettings = {
-    update_interval_minutes: 30,
+    update_interval_minutes: 40,
     total_posts_today: 0,
     start_time: "06:00", // Default start time 6:00 AM
 };

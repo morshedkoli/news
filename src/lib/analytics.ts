@@ -1,6 +1,7 @@
 import { dbAdmin } from "@/lib/firebase-admin";
 import { RssFeed } from "@/types/rss";
 import { DashboardData } from "@/types/analytics";
+import { Timestamp } from 'firebase-admin/firestore';
 
 export async function getAnalyticsData(): Promise<DashboardData> {
     const now = new Date();
@@ -19,10 +20,10 @@ export async function getAnalyticsData(): Promise<DashboardData> {
         statsSnap
     ] = await Promise.all([
         dbAdmin.collection("news")
-            .where("published_at", ">=", startOfDay.toISOString())
+            .where("published_at", ">=", Timestamp.fromDate(startOfDay))
             .get(),
         dbAdmin.collection("news")
-            .where("published_at", ">=", sevenDaysAgo.toISOString())
+            .where("published_at", ">=", Timestamp.fromDate(sevenDaysAgo))
             .get(),
         dbAdmin.collection("rss_run_logs")
             .where("started_at", ">=", startOfDay.toISOString())
@@ -81,7 +82,8 @@ export async function getAnalyticsData(): Promise<DashboardData> {
     for (let i = 0; i < 24; i++) hourlyMap.set(i, 0);
 
     newsTodaySnap.docs.forEach(doc => {
-        const date = new Date(doc.data().published_at);
+        const p = (doc.data() as any).published_at;
+        const date = p && typeof p.toDate === 'function' ? p.toDate() : new Date(p);
         const hour = date.getHours();
         hourlyMap.set(hour, (hourlyMap.get(hour) || 0) + 1);
     });
@@ -94,7 +96,8 @@ export async function getAnalyticsData(): Promise<DashboardData> {
     // Daily
     const dailyMap = new Map<string, number>();
     newsSevenDaysSnap.docs.forEach(doc => {
-        const date = new Date(doc.data().published_at);
+        const p = (doc.data() as any).published_at;
+        const date = p && typeof p.toDate === 'function' ? p.toDate() : new Date(p);
         const key = `${date.getMonth() + 1}/${date.getDate()}`;
         dailyMap.set(key, (dailyMap.get(key) || 0) + 1);
     });

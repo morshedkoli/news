@@ -1,7 +1,7 @@
 export interface RelatedSource {
     source_name: string;
     source_url: string;
-    published_at: string;
+    published_at: any; // Firestore Timestamp or ISO string
 }
 
 export interface NewsArticle {
@@ -14,7 +14,7 @@ export interface NewsArticle {
     // Source Info
     source_name: string;
     source_url: string;
-    published_at: string;
+    published_at?: any; // Firestore Timestamp or ISO string
 
     // Status & Validation
     status?: 'published' | 'blocked';
@@ -35,7 +35,7 @@ export interface NewsArticle {
     ai_generated_at?: string;
 
     // Metadata
-    created_at?: string; // Firestore Timestamp or ISO string
+    created_at?: any; // Firestore Timestamp or ISO string
 
     /** @deprecated Use categoryId and categorySlug instead */
     category?: string;

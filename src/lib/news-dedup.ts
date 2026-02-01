@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import { dbAdmin } from './firebase-admin';
 import { NewsArticle } from '@/types/news';
+import { Timestamp } from 'firebase-admin/firestore';
 
 export interface DuplicateResult {
     isDuplicate: boolean;
@@ -149,7 +150,7 @@ export async function checkDuplicate(
     oneDayAgo.setDate(oneDayAgo.getDate() - 1);
 
     const recentNews = await dbAdmin.collection('news')
-        .where('published_at', '>=', oneDayAgo.toISOString())
+        .where('published_at', '>=', Timestamp.fromDate(oneDayAgo))
         .get();
 
     // Helper for Jaccard/Token similarity

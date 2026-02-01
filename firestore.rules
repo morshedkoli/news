@@ -40,8 +40,12 @@ service cloud.firestore {
     }
 
     // Ads Configuration
+    // Reads are allowed (adjust if you want to restrict reads to authenticated users),
+    // but direct client writes are denied. Admin server must use the Admin SDK
+    // to update `system_ads/config` so changes are audited through the server endpoint.
     match /system_ads/{adId} {
-      allow read, write: if isAdmin();
+      allow read: if true;
+      allow write: if false;
     }
 
     // App Configuration (Version Control, etc.)

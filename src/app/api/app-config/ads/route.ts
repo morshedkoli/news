@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { dbAdmin } from "@/lib/firebase-admin";
+import { dbAdmin, authAdmin } from "@/lib/firebase-admin";
 import { AppAdConfig } from "@/types/ads";
 
 export const revalidate = 0; // Disable Vercel cache for real-time updates
@@ -24,5 +24,60 @@ export async function GET() {
     } catch (error) {
         console.error("Failed to fetch ad config:", error);
         return NextResponse.json(DEFAULT_CONFIG, { status: 500 });
+    }
+}
+
+export async function POST(req: Request) {
+    try {
+        // Auth: Expect Bearer token (Firebase ID Token)
+        const authHeader = req.headers.get('authorization');
+        if (!authHeader?.startsWith('Bearer ')) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+        const token = authHeader.split('Bearer ')[1];
+        const decoded = await authAdmin.verifyIdToken(token);
+
+        const body = await req.json();
+
+        // Basic validation
+        const cfg = body as AppAdConfig;
+        if (typeof cfg.global_enabled !== 'boolean') {
+            return NextResponse.json({ error: 'Invalid config: global_enabled must be boolean' }, { status: 400 });
+        }
+
+        const positions: Array<keyof Omit<AppAdConfig, 'global_enabled' | 'last_updated'>> = ['banner', 'native', 'interstitial'];
+        const validProviders = ['admob', 'custom', 'none'];
+
+        for (const pos of positions) {
+            const p = (cfg as any)[pos];
+            if (!p || typeof p.enabled !== 'boolean') {
+                return NextResponse.json({ error: `Invalid config: ${pos}.enabled must be boolean` }, { status: 400 });
+            }
+            if (p.enabled) {
+                if (!validProviders.includes(p.provider)) {
+                    return NextResponse.json({ error: `Invalid provider for ${pos}` }, { status: 400 });
+                }
+
+                if (p.provider === 'admob' && (!p.unit_id || typeof p.unit_id !== 'string')) {
+                    return NextResponse.json({ error: `Missing ad unit id for ${pos}` }, { status: 400 });
+                }
+                if (p.provider === 'custom' && (!p.custom_image_url || typeof p.custom_image_url !== 'string')) {
+                    return NextResponse.json({ error: `Missing custom_image_url for ${pos}` }, { status: 400 });
+                }
+            }
+        }
+
+        // Persist with audit fields
+        const docRef = dbAdmin.collection('system_ads').doc('config');
+        await docRef.set({
+            ...cfg,
+            last_updated: new Date().toISOString(),
+            last_updated_by: { uid: decoded.uid, email: decoded.email || null }
+        }, { merge: true });
+
+        return NextResponse.json({ success: true, config: cfg });
+    } catch (error: any) {
+        console.error('Failed to update ad config:', error);
+        return NextResponse.json({ error: error.message || 'Failed to update ad config' }, { status: 500 });
     }
 }

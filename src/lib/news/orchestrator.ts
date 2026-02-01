@@ -116,6 +116,15 @@ export class NewsFetchOrchestrator {
                 continue;
             }
 
+            // Require feature image before publishing
+            if (!candidate.image || (typeof candidate.image === 'string' && candidate.image.trim().length === 0)) {
+                this.log(`[Orchestrator] ⛔ BLOCKED (No Image): ${candidate.title}`);
+                const reasons = [...(validation.blockReasons || []), 'IMAGE_MISSING'];
+                this.skipReasons.push(`blocked: IMAGE_MISSING`);
+                await this.saveBlockedNews(candidate, contentHash, urlHash, aiStatus, reasons);
+                continue;
+            }
+
             // E. Publish
             try {
                 // Ensure we pass the updated summary
@@ -207,8 +216,8 @@ export class NewsFetchOrchestrator {
                 normalized_url_hash: urlHash,
                 content_hash: contentHash,
                 source_name: candidate.sourceName,
-                published_at: new Date().toISOString(),
-                created_at: new Date().toISOString(),
+                blocked_at: Timestamp.now(),
+                created_at: Timestamp.now(),
                 category: candidate.category || "General",
                 is_rss: true,
                 source_type: 'rss_fetch',
@@ -240,46 +249,72 @@ export class NewsFetchOrchestrator {
             throw new Error(`Category resolution failed: ${e}`);
         }
 
-        const ref = await dbAdmin.collection('news').add({
-            title: candidate.title,
-            summary: candidate.summary || candidate.excerpt || "Click to read more...",
-            content: candidate.content || "",
-            image: candidate.image || "",
-            source_url: candidate.sourceUrl,
-            normalized_url: candidate.cleanUrl,
-            normalized_url_hash: urlHash,
-            content_hash: contentHash,
-            source_name: candidate.sourceName,
-            published_at: new Date().toISOString(),
-            created_at: new Date().toISOString(),
-            category: categoryName,
-            category_name: categoryName,
-            categoryId,
-            categorySlug,
-            is_rss: true,
-            source_type: 'rss_fetch',
-            summary_status: aiStatus === 'success' ? 'complete' : 'pending',
-            ai_status: aiStatus,
-            importance_score: 50,
-            likes: 0
-        });
+        const statsRef = dbAdmin.collection('system_stats').doc('rss_settings');
+        const newsRef = dbAdmin.collection('news').doc();
 
-        // Update Global Stats (triggers Cooldown)
-        await dbAdmin.collection("system_stats").doc("rss_settings").update({
-            last_news_posted_at: Timestamp.now(),
-            last_run_at: Timestamp.now(), // Heartbeat on success
-            total_posts_today: FieldValue.increment(1),
-            consecutive_failed_runs: 0
-        });
-
-        // Notify App Users
         try {
-            await sendNotification(candidate.title, candidate.summary || "New News Available", ref.id);
-        } catch (e) {
-            console.error("Failed to send notification:", e);
-        }
+            await dbAdmin.runTransaction(async (t) => {
+                const statsSnap = await t.get(statsRef);
+                const statsData = statsSnap.exists ? statsSnap.data() : {} as any;
 
-        return ref.id;
+                const intervalMinutes = (statsData.update_interval_minutes as number) || 40; // default 40
+                const lastPosted = statsData.last_news_posted_at ? statsData.last_news_posted_at.toDate().getTime() : 0;
+
+                if (Date.now() - lastPosted < intervalMinutes * 60 * 1000) {
+                    // Cooldown active - abort transaction
+                    throw new Error('cooldown_active');
+                }
+
+                const newsData = {
+                    title: candidate.title,
+                    summary: candidate.summary || candidate.excerpt || "Click to read more...",
+                    content: candidate.content || "",
+                    image: candidate.image || "",
+                    source_url: candidate.sourceUrl,
+                    normalized_url: candidate.cleanUrl,
+                    normalized_url_hash: urlHash,
+                    content_hash: contentHash,
+                    source_name: candidate.sourceName,
+                    published_at: FieldValue.serverTimestamp(),
+                    created_at: FieldValue.serverTimestamp(),
+                    category: categoryName,
+                    category_name: categoryName,
+                    categoryId,
+                    categorySlug,
+                    is_rss: true,
+                    source_type: 'rss_fetch',
+                    summary_status: aiStatus === 'success' ? 'complete' : 'pending',
+                    ai_status: aiStatus,
+                    importance_score: 50,
+                    likes: 0,
+                    status: 'published'
+                };
+
+                t.set(newsRef, newsData);
+
+                // Update stats atomically
+                t.set(statsRef, {
+                    last_news_posted_at: FieldValue.serverTimestamp(),
+                    last_run_at: FieldValue.serverTimestamp(),
+                    total_posts_today: FieldValue.increment(1),
+                    consecutive_failed_runs: 0
+                }, { merge: true });
+            });
+
+            // Notify App Users (outside transaction)
+            try {
+                await sendNotification(candidate.title, candidate.summary || "New News Available", newsRef.id);
+            } catch (e) {
+                console.error("Failed to send notification:", e);
+            }
+
+            return newsRef.id;
+        } catch (e: any) {
+            if (e.message === 'cooldown_active') {
+                throw new Error('publish_cooldown_active');
+            }
+            throw e;
+        }
     }
 
     private async processRetries() {
