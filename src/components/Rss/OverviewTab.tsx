@@ -39,7 +39,8 @@ export default function OverviewTab({ settings, isLoading }: OverviewTabProps) {
     if (isLoading || loadingLogs) return <div className="p-12 text-center text-gray-500 animate-pulse">Running System Analysis...</div>;
 
     // --- DERIVED METRICS ---
-    const lastSuccess = settings.last_successful_run instanceof Timestamp ? settings.last_successful_run.toDate() : null;
+    const lastSuccess = (settings.last_news_posted_at instanceof Timestamp ? settings.last_news_posted_at.toDate() : null)
+        || (settings.last_successful_run instanceof Timestamp ? settings.last_successful_run.toDate() : null);
     const lastRun = settings.last_run_at instanceof Timestamp ? settings.last_run_at.toDate() : null;
     const minutesSinceSuccess = lastSuccess ? (Date.now() - lastSuccess.getTime()) / (1000 * 60) : 999;
     const postsToday = settings.total_posts_today || 0;
@@ -86,13 +87,13 @@ export default function OverviewTab({ settings, isLoading }: OverviewTabProps) {
             {/* HERO SECTION - Top Level Status */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                 <div className={`p-6 border-b flex flex-col md:flex-row justify-between items-start md:items-center gap-6 ${systemStatus === 'HEALTHY' ? 'bg-emerald-50 border-emerald-100' :
-                        systemStatus === 'DEGRADED' ? 'bg-amber-50 border-amber-100' :
-                            'bg-red-50 border-red-100'
+                    systemStatus === 'DEGRADED' ? 'bg-amber-50 border-amber-100' :
+                        'bg-red-50 border-red-100'
                     }`}>
                     <div>
                         <div className="text-sm font-bold tracking-widest text-gray-500 uppercase mb-1">System Status</div>
                         <div className={`text-4xl font-black flex items-center gap-3 ${systemStatus === 'HEALTHY' ? 'text-emerald-700' :
-                                systemStatus === 'DEGRADED' ? 'text-amber-700' : 'text-red-700'
+                            systemStatus === 'DEGRADED' ? 'text-amber-700' : 'text-red-700'
                             }`}>
                             {systemStatus === 'HEALTHY' && <CheckCircle className="w-10 h-10" />}
                             {systemStatus === 'DEGRADED' && <AlertTriangle className="w-10 h-10" />}

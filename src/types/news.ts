@@ -16,6 +16,10 @@ export interface NewsArticle {
     source_url: string;
     published_at: string;
 
+    // Status & Validation
+    status?: 'published' | 'blocked';
+    block_reasons?: string[];
+
     // Deduplication Fields
     normalized_url: string;
     content_hash: string;

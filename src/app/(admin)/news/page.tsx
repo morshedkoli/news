@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { db } from "@/lib/firebase";
+import { db, auth } from "@/lib/firebase";
 import {
     collection,
     query,
@@ -22,6 +22,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import DeleteConfirmationModal from "@/components/DeleteConfirmationModal";
 import Skeleton from "@/components/Skeleton";
+import { toast } from "sonner";
 
 // Available categories for news
 export const CATEGORIES = [
@@ -96,17 +97,22 @@ export default function NewsListPage() {
         if (!deleteModal.id) return;
         setIsDeleting(true);
         try {
+            const token = await auth.currentUser?.getIdToken();
             const res = await fetch('/api/news/delete', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
                 body: JSON.stringify({ id: deleteModal.id })
             });
             if (!res.ok) throw new Error("Delete failed");
 
             setDeleteModal({ isOpen: false, id: null });
+            toast.success("News article deleted successfully");
         } catch (error) {
             console.error("Delete failed", error);
-            alert("Failed to delete news");
+            toast.error("Failed to delete news article");
         } finally {
             setIsDeleting(false);
         }
@@ -117,16 +123,22 @@ export default function NewsListPage() {
         e.stopPropagation();
 
         try {
+            const token = await auth.currentUser?.getIdToken();
             const res = await fetch('/api/news/update-status', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
                 body: JSON.stringify({ id, published: !currentStatus })
             });
             if (!res.ok) throw new Error("Update failed");
 
+            toast.success(currentStatus ? "Article unpublished" : "Article published");
+
         } catch (error) {
             console.error("Toggle publish failed", error);
-            alert("Failed to update status");
+            toast.error("Failed to update status");
         }
     };
 

@@ -37,19 +37,15 @@ export async function POST(req: Request) {
             // Since we promised ID-based routing, let's prioritize ID.
             // If legacy data, we might not have ID.
 
-            // Delete News
-            t.delete(newsRef);
-
-            // Decrement Category
+            // Decrement Category (Read + Write) - Must happen BEFORE delete (Write)
             if (categoryId) {
                 await CategoryService.decrementCategoryCount(categoryId, t);
             } else if (data?.category) {
-                // Try to resolve legacy?
-                // CAUTION: 'ensureCategory' creates it if missing, which is wrong for delete.
-                // 'decrementCategoryCount' in our new Service expects ID.
-                // We could fetch by slug, but let's stick to ID for now as requested.
-                // or maybe logging missing ID.
+                // Legacy fallback logic if needed
             }
+
+            // Delete News (Write)
+            t.delete(newsRef);
         });
 
         return NextResponse.json({ success: true });

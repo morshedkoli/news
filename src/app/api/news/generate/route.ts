@@ -155,33 +155,48 @@ export async function POST(req: Request) {
             if (aiKey && aiKey.content) {
                 try {
                     // Robust JSON extraction
-                    let clean = aiKey.content.replace(/```json/g, "").replace(/```/g, "").trim();
+                    let clean = aiKey.content
+                        .replace(/```json/gi, "")
+                        .replace(/```/g, "")
+                        .trim();
 
                     // Find first '{' and last '}'
                     const firstOpen = clean.indexOf('{');
                     const lastClose = clean.lastIndexOf('}');
+
                     if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
                         clean = clean.substring(firstOpen, lastClose + 1);
                     }
 
                     try {
                         generated = JSON.parse(clean);
-                    } catch (parseErr) {
-                        // JSON Parse Failed (likely due to newlines). Try Regex Extraction.
-                        console.warn("JSON Parse Failed, attempting Regex fallback...", parseErr);
+                    } catch (parseErr: any) {
+                        console.warn("JSON Parse Failed (Pass 1). Attempting cleanup...", parseErr.message);
 
-                        const titleMatch = clean.match(/"title"\s*:\s*"([^"]+)"/);
-                        const summaryMatch = clean.match(/"summary"\s*:\s*"([\s\S]*?)"\s*(,|})/);
-                        const categoryMatch = clean.match(/"category"\s*:\s*"([^"]+)"/);
+                        // Attempt 2: Escape unescaped newlines inside strings
+                        try {
+                            // This is a naive heuristic: replace actual newlines with \n
+                            // But better to trust Regex fallback if JSON is broken
+                            const cleaner = clean.replace(/\n/g, "\\n");
+                            generated = JSON.parse(cleaner);
+                        } catch (e2) {
+                            // Attempt 3: Regex Fallback
+                            console.warn("JSON Parse Failed (Pass 2). Attempting Regex fallback...");
 
-                        if (summaryMatch) {
-                            generated = {
-                                title: titleMatch ? titleMatch[1] : article.title,
-                                summary: summaryMatch[1].replace(/\\n/g, '\n').trim(), // Unescape if needed
-                                category: categoryMatch ? categoryMatch[1] : "সাধারণ"
-                            };
-                        } else {
-                            throw parseErr; // Regex failed too
+                            const titleMatch = clean.match(/"title"\s*:\s*"([^"]*?)"/);
+                            // improved regex to capture summary until the next key or end of object
+                            const summaryMatch = clean.match(/"summary"\s*:\s*"([\s\S]*?)"(?=\s*,\s*"|\s*})/);
+                            const categoryMatch = clean.match(/"category"\s*:\s*"([^"]*?)"/);
+
+                            if (summaryMatch) {
+                                generated = {
+                                    title: titleMatch ? titleMatch[1] : article.title,
+                                    summary: summaryMatch[1].replace(/\\n/g, '\n').trim(),
+                                    category: categoryMatch ? categoryMatch[1] : "সাধারণ"
+                                };
+                            } else {
+                                throw parseErr; // Give up
+                            }
                         }
                     }
 

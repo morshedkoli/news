@@ -52,9 +52,23 @@ export default function PipelineTab() {
 
                 if (Array.isArray(data.skip_reasons)) {
                     data.skip_reasons.forEach((r: string) => {
-                        if (r.includes("duplicate")) newStats.duplicates++;
-                        if (r.includes("content_too_short") || r.includes("fetch_failed")) newStats.contentFilters++;
-                        if (r.includes("error") || r.includes("fatal")) newStats.errors++;
+                        const reason = r.toLowerCase();
+                        if (reason.includes("duplicate")) newStats.duplicates++;
+
+                        if (reason.includes("blocked") ||
+                            reason.includes("too_short") ||
+                            reason.includes("empty") ||
+                            reason.includes("not_bangla") ||
+                            reason.includes("pending") ||
+                            reason.includes("placeholder")) {
+                            newStats.contentFilters++;
+                        }
+
+                        if (reason.includes("error") ||
+                            reason.includes("failed") ||
+                            reason.includes("fatal")) {
+                            newStats.errors++;
+                        }
                     });
                 }
             });

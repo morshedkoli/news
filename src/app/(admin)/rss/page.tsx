@@ -18,6 +18,8 @@ import { formatDistanceToNow, format, addMinutes } from "date-fns";
 import Link from "next/link";
 import CronStatusModal from "@/components/CronStatusModal";
 import Skeleton from "@/components/Skeleton";
+import DeleteConfirmationModal from "@/components/DeleteConfirmationModal";
+import { toast } from "sonner";
 
 interface RssFeed {
     id: string;
@@ -64,6 +66,12 @@ export default function RssPage() {
         priority: 10,
         enabled: true
     });
+
+    const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; id: string | null }>({
+        isOpen: false,
+        id: null
+    });
+    const [isDeleting, setIsDeleting] = useState(false);
 
     useEffect(() => {
         // Feeds Listener
@@ -121,15 +129,29 @@ export default function RssPage() {
                 });
             }
             resetForm();
+            toast.success(editId ? "Feed updated successfully" : "Feed added successfully");
         } catch (error) {
             console.error(error);
-            alert("Failed to save");
+            toast.error("Failed to save feed");
         }
     };
 
-    const handleDelete = async (id: string) => {
-        if (confirm("Delete this feed?")) {
-            await deleteDoc(doc(db, "rss_feeds", id));
+    const handleDeleteClick = (id: string) => {
+        setDeleteModal({ isOpen: true, id });
+    };
+
+    const confirmDelete = async () => {
+        if (!deleteModal.id) return;
+        setIsDeleting(true);
+        try {
+            await deleteDoc(doc(db, "rss_feeds", deleteModal.id));
+            toast.success("Feed deleted successfully");
+            setDeleteModal({ isOpen: false, id: null });
+        } catch (error) {
+            console.error("Delete failed", error);
+            toast.error("Failed to delete feed");
+        } finally {
+            setIsDeleting(false);
         }
     };
 
@@ -370,7 +392,7 @@ export default function RssPage() {
                                         }} className="p-2 text-slate-400 hover:text-indigo-600 text-sm">
                                             Edit
                                         </button>
-                                        <button onClick={() => handleDelete(feed.id)} className="p-2 text-slate-400 hover:text-red-600">
+                                        <button onClick={() => handleDeleteClick(feed.id)} className="p-2 text-slate-400 hover:text-red-600">
                                             <Trash2 className="w-4 h-4" />
                                         </button>
                                     </div>
@@ -498,7 +520,7 @@ export default function RssPage() {
                                     checked={formData.enabled}
                                     onChange={e => setFormData({ ...formData, enabled: e.target.checked })}
                                     className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                                 />
+                                />
                                 <label htmlFor="enabled" className="text-sm font-medium text-slate-700">Enable Feed</label>
                             </div>
 
@@ -521,6 +543,15 @@ export default function RssPage() {
                 .label { @apply block text-sm font-medium text-slate-700 mb-1; }
                 .input-field { @apply w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none; }
             `}</style>
+
+            <DeleteConfirmationModal
+                isOpen={deleteModal.isOpen}
+                onClose={() => setDeleteModal({ isOpen: false, id: null })}
+                onConfirm={confirmDelete}
+                title="Delete RSS Feed"
+                description="Are you sure you want to delete this feed? This action cannot be undone."
+                isDeleting={isDeleting}
+            />
 
             <CronStatusModal
                 isOpen={cronModal.isOpen}
