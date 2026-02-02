@@ -4,39 +4,44 @@ import { useAuth } from "@/context/AuthContext";
 import Skeleton from "@/components/Skeleton";
 import { format } from "date-fns";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import MissionControl from "@/components/Analytics/MissionControl";
 import DeepStats from "@/components/Analytics/DeepStats";
 import ActionCenter from "@/components/Analytics/ActionCenter";
 import { DashboardData } from "@/types/analytics";
+import { RefreshCw } from "lucide-react";
 
 export default function Home() {
   const { user } = useAuth();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
+  const fetchData = useCallback(async (isManual = false) => {
+    if (isManual) setRefreshing(true);
+    try {
+      const res = await fetch('/api/admin/analytics');
+      if (!res.ok) throw new Error("Failed to fetch");
+      const json = await res.json();
+      setData(json);
+      setLastUpdated(new Date());
+    } catch (error) {
+      console.error("Error fetching dashboard data:", error);
+    } finally {
+      setLoading(false);
+      if (isManual) setRefreshing(false);
+    }
+  }, []);
   // Poll for live updates
   useEffect(() => {
-    async function fetchData() {
-      try {
-        const res = await fetch('/api/admin/analytics');
-        if (!res.ok) throw new Error("Failed to fetch");
-        const json = await res.json();
-        setData(json);
-      } catch (error) {
-        console.error("Error fetching dashboard data:", error);
-      } finally {
-        setLoading(false);
-      }
-    }
-
     if (user) {
       fetchData();
       // Poll every 30 seconds for live feel
-      const interval = setInterval(fetchData, 30000);
+      const interval = setInterval(() => fetchData(false), 30000);
       return () => clearInterval(interval);
     }
-  }, [user]);
+  }, [user, fetchData]);
 
   if (loading || !data) {
     return (
@@ -57,9 +62,26 @@ export default function Home() {
 
   return (
     <div className="space-y-8">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-800">Mission Control</h1>
-        <p className="text-slate-500">System status and operational command.</p>
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-800">Mission Control</h1>
+          <p className="text-slate-500">System status and operational command.</p>
+        </div>
+        <div className="flex items-center gap-3">
+          {lastUpdated && (
+            <span className="text-xs text-slate-400">
+              Updated {format(lastUpdated, "HH:mm:ss")}
+            </span>
+          )}
+          <button
+            onClick={() => fetchData(true)}
+            disabled={refreshing}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition"
+          >
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? 'Refreshing...' : 'Refresh'}
+          </button>
+        </div>
       </div>
 
       {/* Row 1: KPI Cards */}

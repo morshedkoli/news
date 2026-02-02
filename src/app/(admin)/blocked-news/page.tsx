@@ -173,8 +173,9 @@ export default function BlockedNewsPage() {
                                                     <img
                                                         src={item.image}
                                                         alt=""
+                                                        loading="lazy"
                                                         className="h-16 w-24 flex-shrink-0 rounded-lg object-cover bg-slate-100"
-                                                        onError={(e) => (e.currentTarget.style.display = 'none')}
+                                                        onError={(e: React.SyntheticEvent<HTMLImageElement>) => (e.currentTarget.style.display = 'none')}
                                                     />
                                                 ) : (
                                                     <div className="h-16 w-24 flex-shrink-0 rounded-lg bg-slate-100 flex items-center justify-center text-slate-400 text-xs">No Img</div>

@@ -14,4 +14,6 @@ export interface AppAdConfig {
     native: AdPositionConfig;
     interstitial: AdPositionConfig;
     last_updated?: string; // ISO String
+    last_updated_by?: { uid: string; email: string | null };
+    config_version?: number; // Incremented on each save for versioning
 }

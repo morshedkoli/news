@@ -204,21 +204,58 @@ export async function getAnalyticsData(): Promise<DashboardData> {
     // 6. Actionable Insights
     const insights: { type: 'info' | 'warning' | 'critical'; message: string; action?: string }[] = [];
 
-    // Stalled / Manual
+    // Stalled / Manual - with detailed reason
     if (systemStatus === 'stalled' || systemStatus === 'manual') {
+        const lastRun = recentRuns[0];
+        let stallReason = "No posts for > 2 hours.";
+
+        if (lastRun?.exit_reason) {
+            const exitReason = lastRun.exit_reason;
+            if (exitReason.includes('no_candidates')) {
+                stallReason = "RSS feeds returned no new candidates. Check feed URLs or add more sources.";
+            } else if (exitReason.includes('duplicate')) {
+                stallReason = "All candidates were duplicates. Feeds may be stale.";
+            } else if (exitReason.includes('blocked') || exitReason.includes('skipped')) {
+                stallReason = "All candidates failed validation (language/image issues).";
+            } else if (exitReason.includes('cooldown')) {
+                stallReason = "Pipeline entered cooldown unexpectedly.";
+            } else {
+                stallReason = `Last run failed: ${exitReason}`;
+            }
+        }
+
         insights.push({
             type: 'critical',
-            message: `System stalled! No posts for > 2 hours.`,
+            message: `System stalled! ${stallReason}`,
             action: 'trigger_run'
         });
     }
 
-    // Target Miss
-    if (postsToday < target && now.getHours() > 18) {
-        const deficit = target - postsToday;
+    // Progressive Target Warning (not just after 6PM)
+    const hourOfDay = now.getHours();
+    const dayProgress = Math.min(1, (hourOfDay - 6) / 12); // 6AM start, by 6PM should be done
+    const expectedPosts = Math.round(target * dayProgress);
+
+    if (hourOfDay >= 6 && postsToday < expectedPosts) {
+        const deficit = expectedPosts - postsToday;
+        const severity = deficit >= 5 ? 'warning' : 'info';
+        insights.push({
+            type: severity,
+            message: `Behind pace: ${postsToday}/${expectedPosts} expected by ${hourOfDay}:00 (${deficit} behind).`,
+            action: deficit >= 5 ? 'trigger_run' : undefined
+        });
+    } else if (postsToday >= target) {
+        insights.push({
+            type: 'info',
+            message: `Daily target reached! 🎯 ${postsToday}/${target} posts today.`
+        });
+    }
+
+    // Overdue Next Post
+    if (nextPostWindow === "Overdue" && systemStatus !== 'stalled') {
         insights.push({
             type: 'warning',
-            message: `Behind daily target by ${deficit} posts.`,
+            message: "Next post is overdue. Cooldown may have expired.",
             action: 'trigger_run'
         });
     }
@@ -235,7 +272,7 @@ export async function getAnalyticsData(): Promise<DashboardData> {
     if (performance.dedupRate > 80) {
         insights.push({
             type: 'warning',
-            message: `High Dedup Rate (${performance.dedupRate}%). Filters might be too strict.`,
+            message: `High Dedup Rate (${performance.dedupRate}%). Feeds may be stale or filters too strict.`,
             action: 'check_settings'
         });
     }

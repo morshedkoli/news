@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { auth } from '@/lib/firebase';
 import { AppAdConfig, AdPositionConfig } from '@/types/ads';
 import { toast } from 'react-hot-toast';
 import Skeleton from "@/components/Skeleton";
+import { AlertTriangle } from 'lucide-react';
 
 const DEFAULT_CONFIG: AppAdConfig = {
     global_enabled: false,
@@ -12,6 +13,29 @@ const DEFAULT_CONFIG: AppAdConfig = {
     native: { enabled: false, provider: 'none' },
     interstitial: { enabled: false, provider: 'none' }
 };
+
+// Validation helper
+function validateAdConfig(cfg: AppAdConfig): { valid: boolean; errors: string[] } {
+    const errors: string[] = [];
+    const positions: Array<keyof Omit<AppAdConfig, 'global_enabled' | 'last_updated' | 'last_updated_by' | 'config_version'>> = ['banner', 'native', 'interstitial'];
+
+    for (const pos of positions) {
+        const p = cfg[pos];
+        if (p.enabled) {
+            if (p.provider === 'none') {
+                errors.push(`${pos.charAt(0).toUpperCase() + pos.slice(1)}: Select a provider`);
+            }
+            if (p.provider === 'admob' && (!p.unit_id || p.unit_id.trim() === '')) {
+                errors.push(`${pos.charAt(0).toUpperCase() + pos.slice(1)}: Ad Unit ID is required for AdMob`);
+            }
+            if (p.provider === 'custom' && (!p.custom_image_url || p.custom_image_url.trim() === '')) {
+                errors.push(`${pos.charAt(0).toUpperCase() + pos.slice(1)}: Image URL is required for Custom ads`);
+            }
+        }
+    }
+
+    return { valid: errors.length === 0, errors };
+}
 
 export default function AdsPage() {
     const [loading, setLoading] = useState(true);
@@ -39,7 +63,16 @@ export default function AdsPage() {
         }
     };
 
+    // Validation state
+    const validation = useMemo(() => validateAdConfig(config), [config]);
+
     const handleSave = async () => {
+        // Pre-save validation
+        if (!validation.valid) {
+            toast.error(validation.errors[0]); // Show first error
+            return;
+        }
+
         setSaving(true);
         try {
             const token = await auth.currentUser?.getIdToken();
@@ -57,9 +90,11 @@ export default function AdsPage() {
                 throw new Error(err?.error || 'Failed to save ad config');
             }
             toast.success("Ad configuration saved!");
-        } catch (error) {
+            // Refresh to get updated version
+            fetchConfig();
+        } catch (error: any) {
             console.error(error);
-            toast.error("Failed to save changes");
+            toast.error(error.message || "Failed to save changes");
         } finally {
             setSaving(false);
         }
@@ -67,7 +102,7 @@ export default function AdsPage() {
 
     const updateGlobal = (val: boolean) => setConfig({ ...config, global_enabled: val });
 
-    const updateSection = (section: keyof Omit<AppAdConfig, 'global_enabled' | 'last_updated'>, field: keyof AdPositionConfig, value: any) => {
+    const updateSection = (section: 'banner' | 'native' | 'interstitial', field: keyof AdPositionConfig, value: any) => {
         setConfig(prev => ({
             ...prev,
             [section]: {
@@ -97,15 +132,38 @@ export default function AdsPage() {
     return (
         <div className="p-6 max-w-4xl mx-auto space-y-8">
             <div className="flex justify-between items-center">
-                <h1 className="text-2xl font-bold">App Ads Management</h1>
+                <div>
+                    <h1 className="text-2xl font-bold">App Ads Management</h1>
+                    {config.last_updated && (
+                        <p className="text-xs text-gray-400 mt-1">
+                            Last updated: {new Date(config.last_updated).toLocaleString()}
+                            {config.config_version && <span className="ml-2 text-gray-300">v{config.config_version}</span>}
+                        </p>
+                    )}
+                </div>
                 <button
                     onClick={handleSave}
-                    disabled={saving}
+                    disabled={saving || !validation.valid}
                     className="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                 >
                     {saving ? 'Saving...' : 'Save Changes'}
                 </button>
             </div>
+
+            {/* Validation Warnings */}
+            {!validation.valid && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                    <div className="flex items-start gap-3">
+                        <AlertTriangle className="text-amber-500 mt-0.5" size={18} />
+                        <div>
+                            <p className="font-medium text-amber-800">Configuration Issues</p>
+                            <ul className="text-sm text-amber-700 mt-1 list-disc list-inside">
+                                {validation.errors.map((err, i) => <li key={i}>{err}</li>)}
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Global Toggle */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">

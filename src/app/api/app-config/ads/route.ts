@@ -67,12 +67,18 @@ export async function POST(req: Request) {
             }
         }
 
-        // Persist with audit fields
+        // Persist with audit fields and versioning
         const docRef = dbAdmin.collection('system_ads').doc('config');
+
+        // Get current version for increment
+        const currentDoc = await docRef.get();
+        const currentVersion = (currentDoc.data()?.config_version as number) || 0;
+
         await docRef.set({
             ...cfg,
             last_updated: new Date().toISOString(),
-            last_updated_by: { uid: decoded.uid, email: decoded.email || null }
+            last_updated_by: { uid: decoded.uid, email: decoded.email || null },
+            config_version: currentVersion + 1
         }, { merge: true });
 
         return NextResponse.json({ success: true, config: cfg });
