@@ -13,7 +13,7 @@ import {
     updateDoc,
     serverTimestamp,
 } from "firebase/firestore";
-import { Trash2, RefreshCw, Rss, Globe, PauseCircle, PlayCircle, Clock, AlertCircle, TrendingUp, Settings } from "lucide-react";
+import { Trash2, RefreshCw, Rss, Globe, PauseCircle, PlayCircle, Clock, AlertCircle, TrendingUp, Settings, Beaker, X } from "lucide-react";
 import { formatDistanceToNow, format, addMinutes } from "date-fns";
 import Link from "next/link";
 import CronStatusModal from "@/components/CronStatusModal";
@@ -66,6 +66,11 @@ export default function RssPage() {
         priority: 10,
         enabled: true
     });
+
+    // Test Feed State
+    const [testingFeed, setTestingFeed] = useState(false);
+    const [testResult, setTestResult] = useState<any>(null);
+    const [testModalOpen, setTestModalOpen] = useState(false);
 
     const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; id: string | null }>({
         isOpen: false,
@@ -189,6 +194,43 @@ export default function RssPage() {
             }));
         } finally {
             setTriggering(false);
+        }
+    };
+
+    const handleTestFeed = async () => {
+        if (!formData.url) {
+            toast.error("Please enter a URL first");
+            return;
+        }
+
+        setTestingFeed(true);
+        setTestResult(null);
+
+        try {
+            const res = await fetch('/api/rss/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: formData.url })
+            });
+
+            const data = await res.json();
+            setTestResult(data);
+            setTestModalOpen(true);
+
+            if (data.success) {
+                toast.success("Feed is valid!");
+                // Auto-fill name if empty
+                if (!formData.name && data.title && data.title !== 'Unknown Feed') {
+                    setFormData(prev => ({ ...prev, name: data.title }));
+                }
+            } else {
+                toast.error("Feed validation failed");
+            }
+        } catch (error) {
+            console.error("Test failed", error);
+            toast.error("Failed to test feed");
+        } finally {
+            setTestingFeed(false);
         }
     };
 
@@ -468,15 +510,26 @@ export default function RssPage() {
 
                             <div>
                                 <label className="label">RSS URL</label>
-                                <div className="relative">
-                                    <Globe className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                                    <input
-                                        type="url" required
-                                        className="input-field pl-9"
-                                        placeholder="https://..."
-                                        value={formData.url}
-                                        onChange={e => setFormData({ ...formData, url: e.target.value })}
-                                    />
+                                <div className="flex gap-2">
+                                    <div className="relative flex-1">
+                                        <Globe className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                        <input
+                                            type="url" required
+                                            className="input-field pl-9"
+                                            placeholder="https://..."
+                                            value={formData.url}
+                                            onChange={e => setFormData({ ...formData, url: e.target.value })}
+                                        />
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={handleTestFeed}
+                                        disabled={testingFeed || !formData.url}
+                                        className="px-3 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 disabled:opacity-50 transition"
+                                        title="Test Feed URL"
+                                    >
+                                        <Beaker className={`w-4 h-4 ${testingFeed ? 'animate-pulse' : ''}`} />
+                                    </button>
                                 </div>
                             </div>
 
@@ -560,6 +613,84 @@ export default function RssPage() {
                 isLoading={cronModal.isLoading}
                 error={cronModal.error}
             />
+
+            {/* Feed Test Result Modal */}
+            {testModalOpen && testResult && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+                    <div className="w-full max-w-2xl bg-white rounded-xl shadow-2xl overflow-hidden max-h-[80vh] flex flex-col">
+                        <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                            <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                                <Beaker className="w-4 h-4 text-indigo-600" />
+                                Feed Test Results
+                            </h3>
+                            <button onClick={() => setTestModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        <div className="p-6 overflow-y-auto">
+                            {testResult.success ? (
+                                <div className="space-y-4">
+                                    <div className="flex items-center gap-2 text-green-600 bg-green-50 p-3 rounded-lg border border-green-100">
+                                        <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                                        <span className="font-medium">Valid Feed: Found {testResult.itemCount} items</span>
+                                        <span className="text-xs text-green-700 ml-auto">{testResult.latency}ms</span>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4 text-sm">
+                                        <div className="p-3 bg-slate-50 rounded-lg">
+                                            <span className="block text-xs text-slate-400 uppercase font-bold">Feed Title</span>
+                                            <span className="font-medium text-slate-900">{testResult.title}</span>
+                                        </div>
+                                        <div className="p-3 bg-slate-50 rounded-lg">
+                                            <span className="block text-xs text-slate-400 uppercase font-bold">Description</span>
+                                            <span className="font-medium text-slate-900 truncate">{testResult.description || '-'}</span>
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <h4 className="text-sm font-bold text-slate-900 mb-2">Latest Items Preview</h4>
+                                        <div className="space-y-2">
+                                            {testResult.sampleItems.map((item: any, i: number) => (
+                                                <div key={i} className="p-3 border border-slate-100 rounded-lg hover:bg-slate-50">
+                                                    <a href={item.link} target="_blank" rel="noopener noreferrer" className="font-medium text-indigo-600 hover:underline line-clamp-1 block">
+                                                        {item.title}
+                                                    </a>
+                                                    <div className="flex items-center gap-2 mt-1 text-xs text-slate-400">
+                                                        <span>{item.pubDate ? formatDistanceToNow(new Date(item.pubDate), { addSuffix: true }) : 'No date'}</span>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="text-center py-8">
+                                    <div className="w-12 h-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-3">
+                                        <AlertCircle className="w-6 h-6" />
+                                    </div>
+                                    <h4 className="text-lg font-bold text-slate-900 mb-2">Validation Failed</h4>
+                                    <p className="text-red-600 font-medium mb-4">{testResult.error}</p>
+                                    {testResult.details && (
+                                        <pre className="text-xs bg-slate-900 text-slate-50 p-3 rounded-lg text-left overflow-x-auto mx-auto max-w-md">
+                                            {testResult.details}
+                                        </pre>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end">
+                            <button
+                                onClick={() => setTestModalOpen(false)}
+                                className="px-4 py-2 bg-slate-900 text-white text-sm font-bold rounded-lg hover:bg-slate-800"
+                            >
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

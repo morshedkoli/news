@@ -8,6 +8,7 @@ import { useEffect, useState, useCallback } from "react";
 import MissionControl from "@/components/Analytics/MissionControl";
 import DeepStats from "@/components/Analytics/DeepStats";
 import ActionCenter from "@/components/Analytics/ActionCenter";
+import AnalyticsCharts from "@/components/Analytics/AnalyticsCharts";
 import { DashboardData } from "@/types/analytics";
 import { RefreshCw } from "lucide-react";
 
@@ -86,6 +87,9 @@ export default function Home() {
 
       {/* Row 1: KPI Cards */}
       <MissionControl data={data} />
+
+      {/* Row 1.5: Charts */}
+      <AnalyticsCharts data={data} />
 
       {/* Row 2: Deep Analysis & Actions */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

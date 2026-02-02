@@ -32,6 +32,16 @@
     /* Gray-200 */
   }
 
+  .dark {
+    --background: #020617; /* Slate 950 */
+    --foreground: #F8FAFC; /* Slate 50 */
+    --primary: #6366F1; /* Indigo 500 */
+    --primary-foreground: #FFFFFF;
+    --muted: #1E293B; /* Slate 800 */
+    --muted-foreground: #94A3B8; /* Slate 400 */
+    --border: #1E293B; /* Slate 800 */
+  }
+
   body {
     background-color: var(--background);
     color: var(--foreground);

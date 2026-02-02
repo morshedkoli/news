@@ -442,8 +442,8 @@ export default function AddNewsPage() {
                                     className="w-full appearance-none rounded-lg border border-slate-300 bg-white py-2.5 pl-10 pr-4 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                                 >
                                     {CATEGORIES.map((cat) => (
-                                        <option key={cat} value={cat}>
-                                            {cat}
+                                        <option key={cat.slug} value={cat.name}>
+                                            {cat.name}
                                         </option>
                                     ))}
                                 </select>

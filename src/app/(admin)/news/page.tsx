@@ -17,7 +17,7 @@ import {
     where,
 } from "firebase/firestore";
 import { format } from "date-fns";
-import { Edit, Eye, EyeOff, Loader2, Trash2, Search, ChevronLeft, ChevronRight, ThumbsUp, FileText, Tag } from "lucide-react";
+import { Edit, Eye, EyeOff, Loader2, Trash2, Search, ChevronLeft, ChevronRight, ThumbsUp, FileText, Tag, CheckSquare, Square, MinusSquare } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import DeleteConfirmationModal from "@/components/DeleteConfirmationModal";
@@ -25,24 +25,25 @@ import Skeleton from "@/components/Skeleton";
 import { toast } from "sonner";
 
 // Available categories for news
+// Available categories for news mapped to slugs
 export const CATEGORIES = [
-    "সাধারণ",
-    "খেলাধুলা",
-    "রাজনীতি",
-    "প্রযুক্তি",
-    "বিনোদন",
-    "অর্থনীতি",
-    "স্বাস্থ্য",
-    "বিজ্ঞান",
-    "শিক্ষা",
-    "আন্তর্জাতিক",
-    "জাতীয়",
-    "জীবনযাত্রা",
-    "মতামত",
-    "সম্পাদকীয়",
-    "অপরাধ",
-    "পরিবেশ",
-    "ধর্ম"
+    { name: "সাধারণ", slug: "general" },
+    { name: "খেলাধুলা", slug: "sports" },
+    { name: "রাজনীতি", slug: "politics" },
+    { name: "প্রযুক্তি", slug: "technology" },
+    { name: "বিনোদন", slug: "entertainment" },
+    { name: "অর্থনীতি", slug: "economy" },
+    { name: "স্বাস্থ্য", slug: "health" },
+    { name: "বিজ্ঞান", slug: "science" },
+    { name: "শিক্ষা", slug: "education" },
+    { name: "আন্তর্জাতিক", slug: "international" },
+    { name: "জাতীয়", slug: "national" },
+    { name: "জীবনযাত্রা", slug: "lifestyle" },
+    { name: "মতামত", slug: "opinion" },
+    { name: "সম্পাদকীয়", slug: "editorial" },
+    { name: "অপরাধ", slug: "crime" },
+    { name: "পরিবেশ", slug: "environment" },
+    { name: "ধর্ম", slug: "religion" }
 ];
 
 interface NewsItem {
@@ -62,6 +63,7 @@ export default function NewsListPage() {
     const [searchTerm, setSearchTerm] = useState("");
     const [currentPage, setCurrentPage] = useState(1);
     const [categoryFilter, setCategoryFilter] = useState("");
+    const [dateRange, setDateRange] = useState<{ start: string; end: string }>({ start: "", end: "" });
     const [editingCategory, setEditingCategory] = useState<string | null>(null);
     const [updatingCategory, setUpdatingCategory] = useState(false);
 
@@ -71,6 +73,10 @@ export default function NewsListPage() {
         id: null
     });
     const [isDeleting, setIsDeleting] = useState(false);
+
+    // Bulk Selection State
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [isBulkAction, setIsBulkAction] = useState(false);
 
     const itemsPerPage = 10;
 
@@ -143,29 +149,79 @@ export default function NewsListPage() {
     };
 
     const handleCategoryChange = async (id: string, newCategory: string) => {
-        // Note: Category change also needs atomic update if we want to be 100% accurate.
-        // But for now keeping as is, or should we move this to API too?
-        // Let's keep it simple for now, but strictly speaking, changing category means decrement old, increment new.
-        // User requirements emphasized atomic updates.
-        // Let's unimplemented this for now or just log a warning that it's incomplete?
-        // Actually, the user asked for Atomic updates. 
-        // I should probably add an API for this too or just disable it for now if not critical. 
-        // The implementation plan didn't explicitly cover "Change Category" API, but "Update Category Stats" generally.
-        // I'll stick to the plan which covered "Publish" and "Delete". 
-        // I will leave this client-side for now but add a comment or maybe Quick Fix it if I have time.
-        // For strict compliance, I should probably block this or fix it.
-        // Let's refactor it to a quick API call later if needed. For now, let's leave as is but maybe alert user.
-
         setUpdatingCategory(true);
         try {
-            await updateDoc(doc(db, "news", id), {
-                category: newCategory,
+            const token = await auth.currentUser?.getIdToken();
+            const res = await fetch('/api/news/update-category', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    articleId: id,
+                    newCategorySlug: newCategory
+                })
             });
+
+            if (!res.ok) throw new Error("Failed to update category");
+
+            toast.success("Category updated successfully");
             setEditingCategory(null);
         } catch (error) {
             console.error("Category update failed", error);
+            toast.error("Failed to update category");
         } finally {
             setUpdatingCategory(false);
+        }
+    };
+
+    // Bulk Actions Handlers
+    const toggleSelectAll = () => {
+        if (selectedIds.size === paginatedNews.length && paginatedNews.length > 0) {
+            setSelectedIds(new Set());
+        } else {
+            setSelectedIds(new Set(paginatedNews.map(item => item.id)));
+        }
+    };
+
+    const toggleSelect = (id: string) => {
+        const newSet = new Set(selectedIds);
+        if (newSet.has(id)) newSet.delete(id);
+        else newSet.add(id);
+        setSelectedIds(newSet);
+    };
+
+    const handleBulkAction = async (action: 'publish' | 'unpublish' | 'delete') => {
+        if (selectedIds.size === 0) return;
+        if (!confirm(`Are you sure you want to ${action} ${selectedIds.size} items?`)) return;
+
+        setIsBulkAction(true);
+        try {
+            const token = await auth.currentUser?.getIdToken();
+            const res = await fetch('/api/news/bulk-action', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    ids: Array.from(selectedIds),
+                    action
+                })
+            });
+
+            if (!res.ok) throw new Error("Bulk action failed");
+            const data = await res.json();
+
+            toast.success(`Successfully processed ${data.count} items`);
+            setSelectedIds(new Set());
+
+        } catch (error) {
+            console.error("Bulk action failed", error);
+            toast.error("Failed to perform bulk action");
+        } finally {
+            setIsBulkAction(false);
         }
     };
 
@@ -174,7 +230,31 @@ export default function NewsListPage() {
         const matchesSearch = item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
             item.source_name?.toLowerCase().includes(searchTerm.toLowerCase());
         const matchesCategory = !categoryFilter || item.category === categoryFilter;
-        return matchesSearch && matchesCategory;
+
+        // Date Filter
+        let matchesDate = true;
+        if (dateRange.start || dateRange.end) {
+            const itemDate = item.published_at
+                ? (typeof item.published_at.toDate === 'function' ? item.published_at.toDate() : new Date(item.published_at))
+                : null;
+
+            if (itemDate) {
+                if (dateRange.start) {
+                    matchesDate = matchesDate && itemDate >= new Date(dateRange.start);
+                }
+                if (dateRange.end) {
+                    // Set end date to end of day
+                    const end = new Date(dateRange.end);
+                    end.setHours(23, 59, 59, 999);
+                    matchesDate = matchesDate && itemDate <= end;
+                }
+            } else {
+                // Drafts or Items without date don't match date filter if set
+                matchesDate = false;
+            }
+        }
+
+        return matchesSearch && matchesCategory && matchesDate;
     });
 
     const totalPages = Math.ceil(filteredNews.length / itemsPerPage);
@@ -235,9 +315,39 @@ export default function NewsListPage() {
                     >
                         <option value="">All Categories</option>
                         {CATEGORIES.map(cat => (
-                            <option key={cat} value={cat}>{cat}</option>
+                            <option key={cat.slug} value={cat.name}>{cat.name}</option>
                         ))}
                     </select>
+                </div>
+                {/* Date Filters */}
+                <div className="flex items-center gap-2 border-l border-slate-200 pl-4 ml-2">
+                    <div className="relative">
+                        <input
+                            type="date"
+                            value={dateRange.start}
+                            onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
+                            className="rounded-lg border border-slate-200 bg-slate-50 py-2 px-3 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            placeholder="Start Date"
+                        />
+                    </div>
+                    <span className="text-slate-400">-</span>
+                    <div className="relative">
+                        <input
+                            type="date"
+                            value={dateRange.end}
+                            onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
+                            className="rounded-lg border border-slate-200 bg-slate-50 py-2 px-3 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            placeholder="End Date"
+                        />
+                    </div>
+                    {(dateRange.start || dateRange.end) && (
+                        <button
+                            onClick={() => setDateRange({ start: "", end: "" })}
+                            className="ml-2 text-xs text-red-500 hover:text-red-700"
+                        >
+                            Clear
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -247,6 +357,20 @@ export default function NewsListPage() {
                     <table className="w-full text-left text-sm text-slate-600">
                         <thead className="bg-slate-50 text-xs uppercase text-slate-500">
                             <tr>
+                                <th className="px-6 py-4 w-12">
+                                    <button
+                                        onClick={toggleSelectAll}
+                                        className="text-slate-400 hover:text-indigo-600 transition-colors"
+                                    >
+                                        {paginatedNews.length > 0 && selectedIds.size === paginatedNews.length ? (
+                                            <CheckSquare size={20} className="text-indigo-600" />
+                                        ) : selectedIds.size > 0 ? (
+                                            <MinusSquare size={20} className="text-indigo-600" />
+                                        ) : (
+                                            <Square size={20} />
+                                        )}
+                                    </button>
+                                </th>
                                 <th className="px-6 py-4 font-medium">Article</th>
                                 <th className="px-6 py-4 font-medium">Category</th>
                                 <th className="px-6 py-4 font-medium">Source</th>
@@ -258,7 +382,7 @@ export default function NewsListPage() {
                         <tbody className="divide-y divide-slate-100">
                             {paginatedNews.length === 0 ? (
                                 <tr>
-                                    <td colSpan={6} className="px-6 py-12 text-center text-slate-500">
+                                    <td colSpan={7} className="px-6 py-12 text-center text-slate-500">
                                         No articles found matching your criteria.
                                     </td>
                                 </tr>
@@ -266,7 +390,19 @@ export default function NewsListPage() {
                                 paginatedNews.map((item) => {
                                     const isPublished = !!item.published_at;
                                     return (
-                                        <tr key={item.id} className="group hover:bg-slate-50/50 transition">
+                                        <tr key={item.id} className={`group hover:bg-slate-50/50 transition ${selectedIds.has(item.id) ? 'bg-indigo-50/30' : ''}`}>
+                                            <td className="px-6 py-4">
+                                                <button
+                                                    onClick={() => toggleSelect(item.id)}
+                                                    className="text-slate-400 hover:text-indigo-600 transition-colors"
+                                                >
+                                                    {selectedIds.has(item.id) ? (
+                                                        <CheckSquare size={20} className="text-indigo-600" />
+                                                    ) : (
+                                                        <Square size={20} />
+                                                    )}
+                                                </button>
+                                            </td>
                                             <td className="px-6 py-4">
                                                 <div className="flex items-start gap-4">
                                                     {item.image ? (
@@ -308,7 +444,7 @@ export default function NewsListPage() {
                                                         onBlur={() => !updatingCategory && setEditingCategory(null)}
                                                     >
                                                         {CATEGORIES.map(cat => (
-                                                            <option key={cat} value={cat}>{cat}</option>
+                                                            <option key={cat.slug} value={cat.slug}>{cat.name}</option>
                                                         ))}
                                                     </select>
                                                 ) : (
@@ -412,6 +548,44 @@ export default function NewsListPage() {
                     </div>
                 )}
             </div>
+
+            {/* Bulk Action Bar */}
+            {selectedIds.size > 0 && (
+                <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-4 rounded-xl bg-slate-900 p-2 pl-6 text-white shadow-2xl animate-in slide-in-from-bottom-4 duration-200">
+                    <div className="text-sm font-medium">
+                        <span className="font-bold text-indigo-400">{selectedIds.size}</span> selected
+                    </div>
+                    <div className="h-6 w-px bg-slate-700"></div>
+                    <div className="flex items-center gap-1">
+                        <button
+                            onClick={() => handleBulkAction('publish')}
+                            disabled={isBulkAction}
+                            className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium hover:bg-slate-800 transition-colors"
+                        >
+                            <Eye size={16} /> Publish
+                        </button>
+                        <button
+                            onClick={() => handleBulkAction('unpublish')}
+                            disabled={isBulkAction}
+                            className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium hover:bg-slate-800 transition-colors"
+                        >
+                            <EyeOff size={16} /> Unpublish
+                        </button>
+                        <button
+                            onClick={() => handleBulkAction('delete')}
+                            disabled={isBulkAction}
+                            className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-red-500 hover:bg-red-950/30 transition-colors"
+                        >
+                            <Trash2 size={16} /> Delete
+                        </button>
+                    </div>
+                    {isBulkAction && (
+                        <div className="pl-2 border-l border-slate-700">
+                            <Loader2 size={18} className="animate-spin text-indigo-400" />
+                        </div>
+                    )}
+                </div>
+            )}
 
             <DeleteConfirmationModal
                 isOpen={deleteModal.isOpen}

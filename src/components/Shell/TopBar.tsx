@@ -3,6 +3,7 @@
 import { Menu, LogOut, User } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { auth } from "@/lib/firebase";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 
 interface TopBarProps {
@@ -34,7 +35,7 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
             </div>
 
             <div className="flex items-center gap-4">
-
+                <ThemeToggle />
                 <div className="flex items-center gap-3">
                     <div className="hidden text-right sm:block">
                         <p className="text-sm font-medium text-slate-700">{user?.displayName || "Admin User"}</p>
