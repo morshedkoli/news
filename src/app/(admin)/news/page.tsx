@@ -55,6 +55,8 @@ interface NewsItem {
     likes: number;
     summary: string;
     category?: string;
+    status?: 'published' | 'blocked' | 'draft' | 'processing';
+    block_reasons?: string[];
 }
 
 export default function NewsListPage() {
@@ -66,6 +68,7 @@ export default function NewsListPage() {
     const [dateRange, setDateRange] = useState<{ start: string; end: string }>({ start: "", end: "" });
     const [editingCategory, setEditingCategory] = useState<string | null>(null);
     const [updatingCategory, setUpdatingCategory] = useState(false);
+    const [activeTab, setActiveTab] = useState<'published' | 'blocked' | 'draft'>('published');
 
     // Delete Modal State
     const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; id: string | null }>({
@@ -255,6 +258,12 @@ export default function NewsListPage() {
         }
 
         return matchesSearch && matchesCategory && matchesDate;
+    }).filter(item => {
+        // Tab Filtering
+        if (activeTab === 'published') return item.status === 'published' || (item.published_at && !item.status); // Fallback for old data
+        if (activeTab === 'blocked') return item.status === 'blocked';
+        if (activeTab === 'draft') return item.status === 'draft' || item.status === 'processing' || (!item.published_at && !item.status);
+        return true;
     });
 
     const totalPages = Math.ceil(filteredNews.length / itemsPerPage);
@@ -349,6 +358,28 @@ export default function NewsListPage() {
                         </button>
                     )}
                 </div>
+            </div>
+
+            {/* Status Tabs */}
+            <div className="flex border-b border-gray-200">
+                <button
+                    onClick={() => setActiveTab('published')}
+                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'published' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                >
+                    Published
+                </button>
+                <button
+                    onClick={() => setActiveTab('blocked')}
+                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'blocked' ? 'border-red-600 text-red-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                >
+                    Blocked
+                </button>
+                <button
+                    onClick={() => setActiveTab('draft')}
+                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'draft' ? 'border-amber-600 text-amber-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                >
+                    Drafts / Processing
+                </button>
             </div>
 
             {/* Table */}
@@ -465,14 +496,21 @@ export default function NewsListPage() {
                                             </td>
                                             <td className="px-6 py-4">
                                                 <span
-                                                    className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${isPublished
+                                                    className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${item.status === 'published'
                                                         ? "bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20"
-                                                        : "bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-600/20"
+                                                        : item.status === 'blocked'
+                                                            ? "bg-red-50 text-red-700 ring-1 ring-inset ring-red-600/20"
+                                                            : "bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-600/20"
                                                         }`}
                                                 >
-                                                    <span className={`h-1.5 w-1.5 rounded-full ${isPublished ? "bg-emerald-600" : "bg-amber-600"}`}></span>
-                                                    {isPublished ? "Published" : "Draft"}
+                                                    <span className={`h-1.5 w-1.5 rounded-full ${item.status === 'published' ? "bg-emerald-600" : item.status === 'blocked' ? "bg-red-600" : "bg-amber-600"}`}></span>
+                                                    {item.status ? item.status.charAt(0).toUpperCase() + item.status.slice(1) : (isPublished ? "Published" : "Draft")}
                                                 </span>
+                                                {item.status === 'blocked' && item.block_reasons && (
+                                                    <div className="mt-1 text-[10px] text-red-600 max-w-[150px] leading-tight">
+                                                        {item.block_reasons.join(", ")}
+                                                    </div>
+                                                )}
                                             </td>
                                             <td className="px-6 py-4 text-center">
                                                 <div className="flex items-center justify-center gap-1 text-slate-600">

@@ -218,6 +218,8 @@ export class NewsFetchOrchestrator {
                 source_name: candidate.sourceName,
                 blocked_at: Timestamp.now(),
                 created_at: Timestamp.now(),
+                published_at: null, // ENSURE NULL
+                push_sent: false,   // ENSURE FALSE
                 category: candidate.category || "General",
                 is_rss: true,
                 source_type: 'rss_fetch',

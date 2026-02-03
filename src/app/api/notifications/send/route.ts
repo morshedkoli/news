@@ -27,6 +27,18 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: "Missing fields" }, { status: 400 });
         }
 
+        // Safety Gate: Check status before sending
+        const newsRef = dbAdmin.collection('news').doc(newsId);
+        const newsSnap = await newsRef.get();
+        if (!newsSnap.exists) {
+            return NextResponse.json({ error: "News not found" }, { status: 404 });
+        }
+        const newsData = newsSnap.data();
+        if (newsData?.status !== 'published') {
+            console.log(`[NotificationBlocked] Skipped push for blocked/non-published news: ${newsId}`);
+            return NextResponse.json({ error: "News is not published. Push skipped." }, { status: 400 });
+        }
+
         const result = await sendNotification(title, summary, newsId);
         return NextResponse.json({ success: true, result });
     } catch (error: any) {

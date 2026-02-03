@@ -12,7 +12,7 @@ service cloud.firestore {
     // Public can read, but you might want to filter only published news in your queries.
     // The rules allow reading any document if knew the ID, or listing them.
     match /news/{newsId} {
-      allow read: if true;
+      allow read: if (resource.data.status == 'published') || isAdmin();
       allow write: if isAdmin();
     }
 

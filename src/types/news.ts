@@ -17,7 +17,7 @@ export interface NewsArticle {
     published_at?: any; // Firestore Timestamp or ISO string
 
     // Status & Validation
-    status?: 'published' | 'blocked';
+    status?: 'published' | 'blocked' | 'draft' | 'processing';
     block_reasons?: string[];
 
     // Deduplication Fields
