@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, PlusCircle, Rss, List, LogOut, X, Newspaper, BarChart3, Cpu, Megaphone, Smartphone, Activity, ShieldAlert } from "lucide-react";
+import { LayoutDashboard, PlusCircle, Rss, List, LogOut, X, Newspaper, BarChart3, Cpu, Megaphone, Smartphone, Activity, ShieldAlert, Facebook } from "lucide-react";
 import clsx from "clsx";
 import Logo from "@/components/Logo";
 
@@ -20,6 +20,7 @@ const NAV_ITEMS = [
     { label: "RSS Feeds", href: "/rss", icon: Rss },
     { label: "RSS Health", href: "/rss/dashboard", icon: Activity },
     { label: "Blocked News", href: "/blocked-news", icon: ShieldAlert },
+    { label: "Facebook", href: "/facebook", icon: Facebook },
     { label: "Ads Mgmt", href: "/ads", icon: Megaphone },
     { label: "App Update", href: "/app-update", icon: Smartphone },
 ];

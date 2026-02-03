@@ -323,6 +323,23 @@ export class NewsFetchOrchestrator {
                 console.error("Failed to send notification:", e);
             }
 
+            // Auto-post to Facebook pages (outside transaction, non-blocking)
+            try {
+                const { FacebookService } = await import('../facebook-service');
+                await FacebookService.postNewsToPages(
+                    newsRef.id,
+                    candidate.title,
+                    candidate.summary || candidate.excerpt || "Click to read more...",
+                    candidate.image,
+                    candidate.sourceUrl
+                );
+                this.log(`[Orchestrator] Posted to Facebook pages`);
+            } catch (e) {
+                // Log but don't fail the publish operation
+                console.error("Failed to post to Facebook:", e);
+                this.log(`[Orchestrator] Facebook posting failed: ${e}`);
+            }
+
             return newsRef.id;
         } catch (e: any) {
             if (e.message === 'cooldown_active') {

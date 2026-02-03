@@ -66,6 +66,27 @@ export async function POST(req: Request) {
             }
         });
 
+        // Auto-post to Facebook if publishing
+        if (published) {
+            try {
+                // Fetch news data for Facebook posting
+                const newsSnapshot = await dbAdmin.collection('news').doc(id).get();
+                const newsData = newsSnapshot.data();
+
+                const { FacebookService } = await import('@/lib/facebook-service');
+                await FacebookService.postNewsToPages(
+                    id,
+                    newsData?.title || 'Untitled',
+                    newsData?.summary || '',
+                    newsData?.image,
+                    newsData?.source_url
+                );
+            } catch (error: any) {
+                // Log but don't fail the publish operation
+                console.error('Facebook auto-post failed:', error);
+            }
+        }
+
         return NextResponse.json({ success: true });
 
     } catch (error: any) {
