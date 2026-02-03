@@ -104,6 +104,19 @@ export class NewsFetchOrchestrator {
             // D. Validate Content (STRICT GATE)
             const validation = validateNewsContent(candidate);
             if (!validation.isValid) {
+                // Check if we should Drop completely or just Block
+                const dropReasons = ['TITLE_NOT_BANGLA', 'SUMMARY_EMPTY', 'SUMMARY_NOT_BANGLA', 'SUMMARY_TOO_SHORT', 'SUMMARY_PENDING_OR_PLACEHOLDER'];
+                const shouldDrop = validation.blockReasons.some(r => dropReasons.includes(r));
+
+                if (shouldDrop) {
+                    this.log(`[Orchestrator] 🗑️ DROPPED (Low Quality): ${candidate.title}`);
+                    this.log(`  Reasons: ${validation.blockReasons.join(", ")}`);
+                    this.skipReasons.push(`dropped: ${validation.blockReasons.join(", ")}`);
+                    // DO NOT SAVE to DB
+                    continue;
+                }
+
+                // For other reasons (e.g. maybe specific blacklisted keywords if added later), keep blocking logic
                 this.log(`[Orchestrator] ⛔ BLOCKED: ${candidate.title}`);
                 this.log(`  Reasons: ${validation.blockReasons.join(", ")}`);
 
