@@ -47,13 +47,19 @@ export async function POST(req: Request) {
 
             if (published) {
                 // Publishing
-                t.update(newsRef, { published_at: FieldValue.serverTimestamp() });
+                t.update(newsRef, {
+                    published_at: FieldValue.serverTimestamp(),
+                    status: 'published'
+                });
                 if (categoryId) {
                     await CategoryService.incrementCategoryCount(categoryId, t);
                 }
             } else {
                 // Unpublishing
-                t.update(newsRef, { published_at: null });
+                t.update(newsRef, {
+                    published_at: null,
+                    status: 'draft'
+                });
                 if (categoryId) {
                     await CategoryService.decrementCategoryCount(categoryId, t);
                 }
