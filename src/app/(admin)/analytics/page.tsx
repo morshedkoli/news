@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import AnalyticsCharts from '@/components/Analytics/AnalyticsCharts';
+import { QualityDashboard } from '@/components/Analytics/QualityDashboard';
 import Link from "next/link";
 import { Activity, CheckCircle, Clock, TrendingUp, RefreshCw, Zap } from 'lucide-react';
 import { DashboardData } from '@/types/analytics';
@@ -123,6 +124,26 @@ export default function AnalyticsPage() {
                     </div>
                 </div>
             )}
+
+            {/* Quality Metrics Section */}
+            <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+                <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                        <h3 className="font-semibold text-gray-900">Content Quality Metrics</h3>
+                        <span className="text-xs text-gray-500">(Last 24 hours)</span>
+                    </div>
+                    <span className="text-xs text-gray-500">Quality Scoring & Drop Analysis</span>
+                </div>
+                <div className="p-6">
+                    {data?.quality ? (
+                        <QualityDashboard metrics={data.quality} />
+                    ) : (
+                        <div className="text-center py-8 text-gray-500">
+                            No quality metrics available yet. Data will appear after content flows through the pipeline.
+                        </div>
+                    )}
+                </div>
+            </div>
 
             <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div className="flex items-center gap-3">

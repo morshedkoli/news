@@ -48,4 +48,8 @@ export interface NewsArticle {
 
     importance_score?: number;
     is_rss?: boolean;
+
+    quality_score?: number;
+    quality_issues?: string[];
+    quality_tier?: 'high' | 'medium' | 'low';
 }

@@ -15,9 +15,14 @@ export default function GlobalSettingsPage() {
         master_interval_minutes: 5,
         global_safety_delay_minutes: 5,
         require_ai_online: true,
-        max_feeds_per_cycle: 1,
+        max_feeds_per_cycle: 3,
         update_interval_minutes: 60,
-        start_time: "06:00"
+        start_time: "06:00",
+        min_publish_score: 55,
+        min_queue_score: 35,
+        require_image_for_publish: false,
+        summary_min_length: 15,
+        translation_retry_enabled: true
     });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -34,9 +39,14 @@ export default function GlobalSettingsPage() {
                     master_interval_minutes: data.master_interval_minutes || 5,
                     global_safety_delay_minutes: data.global_safety_delay_minutes || 5,
                     require_ai_online: data.require_ai_online ?? true,
-                    max_feeds_per_cycle: data.max_feeds_per_cycle || 1,
+                    max_feeds_per_cycle: data.max_feeds_per_cycle || 3,
                     update_interval_minutes: data.update_interval_minutes ?? 60,
-                    start_time: data.start_time || "06:00"
+                    start_time: data.start_time || "06:00",
+                    min_publish_score: data.min_publish_score ?? 55,
+                    min_queue_score: data.min_queue_score ?? 35,
+                    require_image_for_publish: data.require_image_for_publish ?? false,
+                    summary_min_length: data.summary_min_length ?? 15,
+                    translation_retry_enabled: data.translation_retry_enabled ?? true
                 });
             }
             setLoading(false);
@@ -141,6 +151,78 @@ export default function GlobalSettingsPage() {
                             className="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-2 border"
                         />
                         <p className="text-xs text-slate-400 mt-1">How many feeds to process in one cron wakeup (Keep low for Vercel)</p>
+                    </div>
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+                    <h2 className="text-lg font-semibold text-slate-800 flex items-center gap-2">
+                        <ShieldCheck className="w-5 h-5 text-emerald-600" />
+                        Quality Controls
+                    </h2>
+
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Minimum Publish Score</label>
+                        <input
+                            type="number" min="0" max="100"
+                            value={config.min_publish_score}
+                            onChange={e => setConfig({ ...config, min_publish_score: parseInt(e.target.value) || 0 })}
+                            className="w-full rounded-md border-slate-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 p-2 border"
+                        />
+                        <p className="text-xs text-slate-400 mt-1">Higher values mean stricter publishing quality.</p>
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Minimum Queue Score</label>
+                        <input
+                            type="number" min="0" max="100"
+                            value={config.min_queue_score}
+                            onChange={e => setConfig({ ...config, min_queue_score: parseInt(e.target.value) || 0 })}
+                            className="w-full rounded-md border-slate-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 p-2 border"
+                        />
+                        <p className="text-xs text-slate-400 mt-1">Below this score, items are dropped instead of queued.</p>
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Summary Minimum Length</label>
+                        <input
+                            type="number" min="10" max="200"
+                            value={config.summary_min_length}
+                            onChange={e => setConfig({ ...config, summary_min_length: parseInt(e.target.value) || 0 })}
+                            className="w-full rounded-md border-slate-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 p-2 border"
+                        />
+                        <p className="text-xs text-slate-400 mt-1">Shorter summaries are penalized in quality scoring.</p>
+                    </div>
+
+                    <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg border border-slate-100">
+                        <div>
+                            <span className="block text-sm font-medium text-slate-900">Require Image for Publish</span>
+                            <span className="text-xs text-slate-500">If enabled, missing images will only queue, not publish.</span>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={config.require_image_for_publish}
+                                onChange={e => setConfig({ ...config, require_image_for_publish: e.target.checked })}
+                                className="sr-only peer"
+                            />
+                            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-emerald-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                        </label>
+                    </div>
+
+                    <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg border border-slate-100">
+                        <div>
+                            <span className="block text-sm font-medium text-slate-900">Enable Translation Retry</span>
+                            <span className="text-xs text-slate-500">Save failed translations and retry later.</span>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={config.translation_retry_enabled}
+                                onChange={e => setConfig({ ...config, translation_retry_enabled: e.target.checked })}
+                                className="sr-only peer"
+                            />
+                            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-emerald-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                        </label>
                     </div>
                 </div>
 

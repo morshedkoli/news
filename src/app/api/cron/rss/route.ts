@@ -3,6 +3,7 @@ import { dbAdmin } from "@/lib/firebase-admin"; // Keep common imports
 import { NewsFetchOrchestrator } from "@/lib/news/orchestrator";
 import { RssSettings } from '@/types/rss';
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { getActiveProviders } from "@/lib/ai-engine";
 
 // Cron configuration
 export const maxDuration = 60; // 60 seconds max duration
@@ -88,7 +89,32 @@ export async function GET(req: NextRequest) {
             return NextResponse.json({ status: "skipped", reason: "before_start_time" });
         }
 
-        // B. Global Cooldown Check (Last Successful Publish)
+        // B. Require AI Online (Optional)
+        if (settings.require_ai_online && !forceMode && !dryRun) {
+            const providers = await getActiveProviders();
+            if (!providers || providers.length === 0) {
+                console.log(`⛔ AI Offline. Skipping run.`);
+                if (!dryRun) await settingsRef.update({ global_lock_until: null });
+                return NextResponse.json({ status: "skipped", reason: "ai_offline" });
+            }
+        }
+
+        // C. Global Safety Delay (avoid rapid re-runs)
+        if (settings.last_run_at && !forceMode && !dryRun) {
+            const lastRunDate = getTimestampDate(settings.last_run_at);
+            const lastRun = lastRunDate ? lastRunDate.getTime() : 0;
+            const delay = typeof settings.global_safety_delay_minutes === 'number'
+                ? settings.global_safety_delay_minutes
+                : 5;
+            const minsSinceRun = (Date.now() - lastRun) / 60000;
+            if (minsSinceRun < delay) {
+                console.log(`⏸️ Global Safety Delay. Last run ${minsSinceRun.toFixed(1)}m ago. Delay ${delay}m.`);
+                if (!dryRun) await settingsRef.update({ global_lock_until: null });
+                return NextResponse.json({ status: "skipped", reason: "global_safety_delay" });
+            }
+        }
+
+        // D. Global Cooldown Check (Last Successful Publish)
         // Cooldown should ONLY apply if we actually PUBLISHED recently.
         if (settings.last_news_posted_at && !forceMode && !dryRun) {
             const lastPostDate = getTimestampDate(settings.last_news_posted_at);
@@ -103,7 +129,7 @@ export async function GET(req: NextRequest) {
             }
         }
 
-        // C. Daily Reset Logic
+        // E. Daily Reset Logic
         const today = new Date().toISOString().split('T')[0];
         if (settings.last_reset_date !== today && !dryRun) {
             await settingsRef.set({

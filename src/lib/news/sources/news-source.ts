@@ -13,6 +13,9 @@ export interface ArticleCandidate {
     // Metadata
     score?: number;
     category?: string;
+    feedLanguage?: 'bn' | 'en';
+    sourceType?: 'direct' | 'aggregator';
+    feedPriority?: number;
 
     // RSS Specific configuration passed back
     feedId?: string;

@@ -47,7 +47,7 @@ export function validateNewsContent(candidate: ArticleCandidate): ValidationResu
 
     const hasEnglishLetters = (text: string) => /[A-Za-z]/.test(text);
 
-    if (hasEnglishLetters(title) || hasEnglishLetters(summary) || hasEnglishLetters(content)) {
+    if (hasEnglishLetters(title) || hasEnglishLetters(summary)) {
         reasons.push("ENGLISH_DETECTED");
     }
 
@@ -75,13 +75,13 @@ export function validateNewsContent(candidate: ArticleCandidate): ValidationResu
 
         // B. Check Length (Only if not already flagged as pending)
         // If it's pending, we don't care if it's too short (PENDING is the main reason)
-        if (!isPendingOrPlaceholder && summary.length < 40) {
+        if (!isPendingOrPlaceholder && summary.length < 20) {
             reasons.push("SUMMARY_TOO_SHORT");
         }
 
         // C. Check Language (Only if not pending/short)
         // We only check language if we have enough content to judge.
-        if (!isPendingOrPlaceholder && summary.length >= 40) {
+        if (!isPendingOrPlaceholder && summary.length >= 20) {
             if (!isBanglaText(summary)) {
                 reasons.push("SUMMARY_NOT_BANGLA");
             }

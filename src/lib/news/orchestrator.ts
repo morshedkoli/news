@@ -7,6 +7,44 @@ import { normalizeCategory } from '../news-fetcher';
 import { isBanglaText, validateNewsContent } from './validation';
 import crypto from 'crypto';
 
+interface OrchestratorSettings {
+    maxFeedsPerCycle: number;
+    minPublishScore: number;
+    minQueueScore: number;
+    requireImageForPublish: boolean;
+    summaryMinLength: number;
+    translationRetryEnabled: boolean;
+    queueIntervalMinutes: number;
+}
+
+interface QualityAssessment {
+    score: number;
+    issues: string[];
+    tier: 'high' | 'medium' | 'low';
+    publishable: boolean;
+    queueable: boolean;
+}
+
+const DEFAULT_SETTINGS: OrchestratorSettings = {
+    maxFeedsPerCycle: 3,
+    minPublishScore: 55,
+    minQueueScore: 35,
+    requireImageForPublish: false,
+    summaryMinLength: 15,
+    translationRetryEnabled: true,
+    queueIntervalMinutes: 30
+};
+
+const INVALID_SUMMARY_PHRASES = [
+    "pending summary",
+    "summary coming soon",
+    "processing",
+    "ai processing",
+    "generating summary",
+    "summary unavailable",
+    "click to read more"
+];
+
 interface RunResult {
     success: boolean;
     sourceUsed?: string;
@@ -20,6 +58,7 @@ export class NewsFetchOrchestrator {
     private runId: string;
     private startTime: number;
     private log = console.log;
+    private settings: OrchestratorSettings = { ...DEFAULT_SETTINGS };
 
     // Run Stats
     private itemsChecked = 0;
@@ -32,8 +71,128 @@ export class NewsFetchOrchestrator {
         this.rssSource = new RssSource();
     }
 
+    private async loadSettings() {
+        try {
+            const snap = await dbAdmin.collection('system_stats').doc('rss_settings').get();
+            const data = snap.exists ? (snap.data() as Record<string, unknown>) : {};
+
+            const maxFeedsPerCycle = typeof data.max_feeds_per_cycle === 'number' ? data.max_feeds_per_cycle : DEFAULT_SETTINGS.maxFeedsPerCycle;
+            const minPublishScore = typeof data.min_publish_score === 'number' ? data.min_publish_score : DEFAULT_SETTINGS.minPublishScore;
+            const minQueueScore = typeof data.min_queue_score === 'number' ? data.min_queue_score : DEFAULT_SETTINGS.minQueueScore;
+            const requireImageForPublish = typeof data.require_image_for_publish === 'boolean' ? data.require_image_for_publish : DEFAULT_SETTINGS.requireImageForPublish;
+            const summaryMinLength = typeof data.summary_min_length === 'number' ? data.summary_min_length : DEFAULT_SETTINGS.summaryMinLength;
+            const translationRetryEnabled = typeof data.translation_retry_enabled === 'boolean'
+                ? data.translation_retry_enabled
+                : DEFAULT_SETTINGS.translationRetryEnabled;
+            const queueIntervalMinutesRaw = typeof data.update_interval_minutes === 'number'
+                ? data.update_interval_minutes
+                : DEFAULT_SETTINGS.queueIntervalMinutes;
+            const queueIntervalMinutes = Math.max(15, queueIntervalMinutesRaw);
+
+            this.settings = {
+                maxFeedsPerCycle,
+                minPublishScore,
+                minQueueScore,
+                requireImageForPublish,
+                summaryMinLength,
+                translationRetryEnabled,
+                queueIntervalMinutes
+            };
+
+            this.rssSource.setMaxFeedsPerCycle(maxFeedsPerCycle);
+        } catch (e) {
+            console.error('[Orchestrator] Failed to load settings, using defaults', e);
+            this.settings = { ...DEFAULT_SETTINGS };
+        }
+    }
+
+    private isSummaryPlaceholder(summary: string): boolean {
+        const lower = summary.toLowerCase();
+        return INVALID_SUMMARY_PHRASES.some(phrase => lower.includes(phrase));
+    }
+
+    private assessQuality(candidate: ArticleCandidate, summary: string): QualityAssessment {
+        let score = 100;
+        const issues: string[] = [];
+
+        const title = (candidate.title || '').trim();
+        const summaryText = (summary || '').trim();
+        const content = (candidate.content || candidate.excerpt || '').trim();
+        const hasEnglishLetters = (text: string) => /[A-Za-z]/.test(text);
+
+        if (!candidate.image || (typeof candidate.image === 'string' && candidate.image.trim().length === 0)) {
+            score -= 20;
+            issues.push('IMAGE_MISSING');
+        }
+
+        if (!summaryText) {
+            score -= 40;
+            issues.push('SUMMARY_EMPTY');
+        } else {
+            if (this.isSummaryPlaceholder(summaryText)) {
+                score -= 30;
+                issues.push('SUMMARY_PLACEHOLDER');
+            }
+            if (summaryText.length < this.settings.summaryMinLength) {
+                score -= 20;
+                issues.push('SUMMARY_TOO_SHORT');
+            }
+        }
+
+        if (!title) {
+            score -= 40;
+            issues.push('TITLE_EMPTY');
+        } else {
+            if (!isBanglaText(title)) {
+                score -= 25;
+                issues.push('TITLE_NOT_BANGLA');
+            }
+            if (hasEnglishLetters(title)) {
+                score -= 10;
+                issues.push('TITLE_HAS_ENGLISH');
+            }
+        }
+
+        if (summaryText.length >= this.settings.summaryMinLength) {
+            if (!isBanglaText(summaryText)) {
+                score -= 15;
+                issues.push('SUMMARY_NOT_BANGLA');
+            }
+            if (hasEnglishLetters(summaryText)) {
+                score -= 8;
+                issues.push('SUMMARY_HAS_ENGLISH');
+            }
+        }
+
+        if (!content) {
+            score -= 10;
+            issues.push('CONTENT_MISSING');
+        }
+
+        if (candidate.sourceType === 'aggregator') {
+            score -= 5;
+            issues.push('SOURCE_AGGREGATOR');
+        }
+
+        if (typeof candidate.feedPriority === 'number' && candidate.feedPriority > 6) {
+            score -= 5;
+            issues.push('LOW_PRIORITY_FEED');
+        }
+
+        score = Math.max(0, Math.min(100, score));
+
+        const tier = score >= 80 ? 'high' : score >= 60 ? 'medium' : 'low';
+        const hasImage = !!candidate.image && (typeof candidate.image !== 'string' || candidate.image.trim().length > 0);
+        const publishable = score >= this.settings.minPublishScore && (!this.settings.requireImageForPublish || hasImage);
+        const queueable = score >= this.settings.minQueueScore;
+
+        return { score, issues, tier, publishable, queueable };
+    }
+
     async run(): Promise<RunResult> {
         this.log(`[Orchestrator] Run ${this.runId} started. Mode=RSS_ONLY`);
+
+        await this.loadSettings();
 
         // 1. Process Retries (Before new fetch)
         await this.processRetries();
@@ -58,7 +217,7 @@ export class NewsFetchOrchestrator {
         let publishedOnce = false;
         let publishedId: string | undefined;
         let queuedCount = 0;
-        const queueStart = Date.now() + 30 * 60 * 1000;
+        const queueStart = Date.now() + this.settings.queueIntervalMinutes * 60 * 1000;
 
         for (const candidate of candidates) {
             // A. Deduplication (Strict)
@@ -94,14 +253,14 @@ export class NewsFetchOrchestrator {
             const hasEnglishLetters = (text: string) => /[A-Za-z]/.test(text);
 
             // C. AI Summary (Non-Blocking)
-            let summary = candidate.summary || "Pending Summary";
+            let summary = candidate.summary || candidate.excerpt || "";
             let aiStatus = 'skipped';
 
-            if (fullContent || candidate.summary) {
+            if (fullContent || candidate.summary || candidate.excerpt) {
                 try {
                     const aiModule = await import('../ai-engine');
                     const aiResult = await aiModule.generateContentWithFallback(
-                        `Summarize this news article in 2-3 sentences in Bengali (Bangla) only. Content: ${fullContent || candidate.summary}`
+                        `Summarize this news article in 2-3 sentences in Bengali (Bangla) only. Content: ${fullContent || candidate.summary || candidate.excerpt || ""}`
                         , { feature: 'news_summary' }, 2);
 
                     if (aiResult?.content) {
@@ -113,7 +272,7 @@ export class NewsFetchOrchestrator {
                     this.log(`[Orchestrator] AI Summary Failed (Non-fatal): ${e}`);
                     aiStatus = 'failed';
                     this.aiFailures++;
-                    summary = candidate.summary || candidate.excerpt || "Summary unavailable";
+                    summary = candidate.summary || candidate.excerpt || "";
                 }
             }
 
@@ -121,7 +280,9 @@ export class NewsFetchOrchestrator {
             const titleNeedsTranslation = candidate.title && (hasEnglishLetters(candidate.title) || !isBanglaText(candidate.title));
             const summaryNeedsTranslation = summary && (hasEnglishLetters(summary) || !isBanglaText(summary));
 
-            if (titleNeedsTranslation || summaryNeedsTranslation) {
+            const shouldTranslate = candidate.feedLanguage === 'en' || titleNeedsTranslation || summaryNeedsTranslation;
+
+            if (shouldTranslate) {
                 try {
                     const aiModule = await import('../ai-engine');
                     const translationPrompt = `Translate the following title and summary to Bengali (Bangla). Return ONLY JSON in this format: {"title":"...","summary":"..."}.
@@ -160,26 +321,41 @@ Summary: ${summary}`;
                                 } else {
                                     this.log(`[Orchestrator] ⛔ Translation Invalid: ${candidate.title}`);
                                     this.skipReasons.push('dropped: TRANSLATION_INVALID');
+                                    if (this.settings.translationRetryEnabled) {
+                                        await this.saveBlockedRetry(candidate, contentHash, urlHash, aiStatus, ['TRANSLATION_INVALID']);
+                                    }
                                     continue;
                                 }
                             } else {
                                 this.log(`[Orchestrator] ⛔ Translation Missing Fields: ${candidate.title}`);
                                 this.skipReasons.push('dropped: TRANSLATION_MISSING_FIELDS');
+                                if (this.settings.translationRetryEnabled) {
+                                    await this.saveBlockedRetry(candidate, contentHash, urlHash, aiStatus, ['TRANSLATION_MISSING_FIELDS']);
+                                }
                                 continue;
                             }
                         } else {
                             this.log(`[Orchestrator] ⛔ Translation JSON Parse Failed: ${candidate.title}`);
                             this.skipReasons.push('dropped: TRANSLATION_PARSE_FAILED');
+                            if (this.settings.translationRetryEnabled) {
+                                await this.saveBlockedRetry(candidate, contentHash, urlHash, aiStatus, ['TRANSLATION_PARSE_FAILED']);
+                            }
                             continue;
                         }
                     } else {
                         this.log(`[Orchestrator] ⛔ Translation Failed: ${candidate.title}`);
                         this.skipReasons.push('dropped: TRANSLATION_FAILED');
+                        if (this.settings.translationRetryEnabled) {
+                            await this.saveBlockedRetry(candidate, contentHash, urlHash, aiStatus, ['TRANSLATION_FAILED']);
+                        }
                         continue;
                     }
                 } catch (e) {
                     this.log(`[Orchestrator] ⛔ Translation Error: ${candidate.title}`);
                     this.skipReasons.push('dropped: TRANSLATION_ERROR');
+                    if (this.settings.translationRetryEnabled) {
+                        await this.saveBlockedRetry(candidate, contentHash, urlHash, aiStatus, ['TRANSLATION_ERROR']);
+                    }
                     continue;
                 }
             }
@@ -204,43 +380,12 @@ Category: ${candidate.category}`,
 
             candidate.category = normalizedCategory || "সাধারণ";
 
-            // E. Validate Content (STRICT GATE)
-            const validation = validateNewsContent(candidate);
-            if (!validation.isValid) {
-                // Check if we should Drop completely or just Block
-                const dropReasons = [
-                    'TITLE_NOT_BANGLA',
-                    'SUMMARY_EMPTY',
-                    'SUMMARY_NOT_BANGLA',
-                    'SUMMARY_TOO_SHORT',
-                    'SUMMARY_PENDING_OR_PLACEHOLDER',
-                    'ENGLISH_DETECTED'
-                ];
-                const shouldDrop = validation.blockReasons.some(r => dropReasons.includes(r));
-
-                if (shouldDrop) {
-                    this.log(`[Orchestrator] 🗑️ DROPPED (Low Quality): ${candidate.title}`);
-                    this.log(`  Reasons: ${validation.blockReasons.join(", ")}`);
-                    this.skipReasons.push(`dropped: ${validation.blockReasons.join(", ")}`);
-                    // DO NOT SAVE to DB
-                    continue;
-                }
-
-                // For other reasons (e.g. maybe specific blacklisted keywords if added later), drop without saving
-                this.log(`[Orchestrator] ⛔ BLOCKED (Drop): ${candidate.title}`);
-                this.log(`  Reasons: ${validation.blockReasons.join(", ")}`);
-
-                this.skipReasons.push(`dropped: ${validation.blockReasons.join(", ")}`);
-
-                // DO NOT SAVE to DB
-                continue;
-            }
-
-            // Require feature image before publishing
-            if (!candidate.image || (typeof candidate.image === 'string' && candidate.image.trim().length === 0)) {
-                this.log(`[Orchestrator] 🗑️ DROPPED (No Image): ${candidate.title}`);
-                this.skipReasons.push('dropped: IMAGE_MISSING');
-                // DO NOT SAVE to DB
+            // E. Quality Assessment
+            const quality = this.assessQuality(candidate, summary);
+            if (!quality.queueable) {
+                this.log(`[Orchestrator] 🗑️ DROPPED (Quality ${quality.score}): ${candidate.title}`);
+                this.log(`  Reasons: ${quality.issues.join(", ")}`);
+                this.skipReasons.push(`dropped: ${quality.issues.join(", ")}`);
                 continue;
             }
 
@@ -249,8 +394,8 @@ Category: ${candidate.category}`,
                 // Ensure we pass the updated summary
                 candidate.summary = summary;
 
-                if (!publishedOnce) {
-                    const newsId = await this.publish(candidate, contentHash, urlHash, aiStatus);
+                if (!publishedOnce && quality.publishable) {
+                    const newsId = await this.publish(candidate, contentHash, urlHash, aiStatus, quality);
                     this.log(`[Orchestrator] Published: ${candidate.title} (${newsId})`);
                     publishedOnce = true;
                     publishedId = newsId;
@@ -260,8 +405,8 @@ Category: ${candidate.category}`,
                     }
                 } else {
                     queuedCount += 1;
-                    const scheduledAt = Timestamp.fromDate(new Date(queueStart + ((queuedCount - 1) * 30 * 60 * 1000)));
-                    await this.saveQueuedNews(candidate, contentHash, urlHash, aiStatus, scheduledAt);
+                    const scheduledAt = Timestamp.fromDate(new Date(queueStart + ((queuedCount - 1) * this.settings.queueIntervalMinutes * 60 * 1000)));
+                    await this.saveQueuedNews(candidate, contentHash, urlHash, aiStatus, scheduledAt, quality);
                     this.log(`[Orchestrator] Queued: ${candidate.title} (in ${queuedCount * 30}m)`);
                 }
             } catch (e: unknown) {
@@ -327,7 +472,7 @@ Category: ${candidate.category}`,
         return crypto.createHash('md5').update(text).digest('hex');
     }
 
-    private async saveQueuedNews(candidate: ArticleCandidate, contentHash: string, urlHash: string, aiStatus: string, scheduledAt: Timestamp) {
+    private async saveQueuedNews(candidate: ArticleCandidate, contentHash: string, urlHash: string, aiStatus: string, scheduledAt: Timestamp, quality: QualityAssessment) {
         try {
             let categoryId: string | undefined;
             let categorySlug: string | undefined;
@@ -365,11 +510,63 @@ Category: ${candidate.category}`,
                 summary_status: aiStatus === 'success' ? 'complete' : 'pending',
                 ai_status: aiStatus,
                 importance_score: 30,
+                quality_score: quality.score,
+                quality_issues: quality.issues,
+                quality_tier: quality.tier,
                 likes: 0,
                 status: 'processing'
             });
         } catch (e) {
             console.error("Failed to save queued news:", e);
+        }
+    }
+
+    private async saveBlockedRetry(candidate: ArticleCandidate, contentHash: string, urlHash: string, aiStatus: string, reasons: string[]) {
+        try {
+            let categoryId: string | undefined;
+            let categorySlug: string | undefined;
+            const categoryName = candidate.category || "সাধারণ";
+
+            try {
+                const { CategoryService } = await import('../categories');
+                const catData = await CategoryService.ensureCategory(categoryName);
+                categoryId = catData.id;
+                categorySlug = catData.slug;
+            } catch (e) {
+                console.error("Retry Category Error:", e);
+            }
+
+            await dbAdmin.collection('news').add({
+                title: candidate.title,
+                summary: candidate.summary || candidate.excerpt || "",
+                content: candidate.content || "",
+                image: candidate.image || "",
+                source_url: candidate.sourceUrl,
+                normalized_url: candidate.cleanUrl,
+                normalized_url_hash: urlHash,
+                content_hash: contentHash,
+                source_name: candidate.sourceName,
+                created_at: Timestamp.now(),
+                published_at: null,
+                scheduled_at: null,
+                push_sent: false,
+                category: categoryName,
+                category_name: categoryName,
+                categoryId,
+                categorySlug,
+                is_rss: true,
+                source_type: 'rss_fetch',
+                summary_status: aiStatus === 'success' ? 'complete' : 'pending',
+                ai_status: aiStatus,
+                importance_score: 10,
+                likes: 0,
+                status: 'blocked_retry',
+                block_reasons: reasons,
+                retry_count: 0,
+                next_retry_at: Timestamp.fromDate(new Date(Date.now() + 10 * 60 * 1000))
+            });
+        } catch (e) {
+            console.error("Failed to save blocked retry:", e);
         }
     }
 
@@ -458,7 +655,7 @@ Category: ${candidate.category}`,
         }
     }
 
-    private async publish(candidate: ArticleCandidate, contentHash: string, urlHash: string, aiStatus: string): Promise<string> {
+    private async publish(candidate: ArticleCandidate, contentHash: string, urlHash: string, aiStatus: string, quality: QualityAssessment): Promise<string> {
         let categoryId: string | undefined;
         let categorySlug: string | undefined;
         const categoryName = candidate.category || "General";
@@ -513,6 +710,9 @@ Category: ${candidate.category}`,
                     summary_status: aiStatus === 'success' ? 'complete' : 'pending',
                     ai_status: aiStatus,
                     importance_score: 50,
+                    quality_score: quality.score,
+                    quality_issues: quality.issues,
+                    quality_tier: quality.tier,
                     likes: 0,
                     status: 'published'
                 };
@@ -622,12 +822,24 @@ Original Summary: ${data.summary}`;
                                 // Re-validate
                                 const validation = validateNewsContent(candidate);
                                 if (validation.isValid) {
-                                    // Publish!
-                                    await this.publish(candidate, data.content_hash, data.normalized_url_hash, 'success_retry');
-                                    // Delete blocked doc
-                                    await dbAdmin.collection('news').doc(docId).delete();
-                                    this.log(`[Orchestrator] Retry Success: ${data.title} -> ${translated.title}`);
-                                    continue;
+                                    const quality = this.assessQuality(candidate, candidate.summary || "");
+
+                                    if (quality.publishable) {
+                                        await this.publish(candidate, data.content_hash, data.normalized_url_hash, 'success_retry', quality);
+                                        await dbAdmin.collection('news').doc(docId).delete();
+                                        this.log(`[Orchestrator] Retry Success: ${data.title} -> ${translated.title}`);
+                                        continue;
+                                    }
+
+                                    if (quality.queueable) {
+                                        const scheduledAt = Timestamp.fromDate(new Date(Date.now() + this.settings.queueIntervalMinutes * 60 * 1000));
+                                        await this.saveQueuedNews(candidate, data.content_hash, data.normalized_url_hash, 'success_retry', scheduledAt, quality);
+                                        await dbAdmin.collection('news').doc(docId).delete();
+                                        this.log(`[Orchestrator] Retry Queued: ${data.title} -> ${translated.title}`);
+                                        continue;
+                                    }
+
+                                    this.log(`[Orchestrator] Retry Quality Too Low: ${quality.issues.join(',')}`);
                                 } else {
                                     this.log(`[Orchestrator] Retry Translation Invalid: ${validation.blockReasons.join(',')}`);
                                 }

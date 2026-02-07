@@ -9,6 +9,13 @@ export class RssSource implements NewsSource {
     name = 'RSS Feed';
     priority = 1;
     enabled = true;
+    private maxFeedsPerCycle = 3;
+
+    setMaxFeedsPerCycle(value: number) {
+        if (Number.isFinite(value) && value > 0) {
+            this.maxFeedsPerCycle = Math.min(5, Math.max(1, Math.floor(value)));
+        }
+    }
 
     async fetchCandidates(): Promise<ArticleCandidate[]> {
         console.log(`[RssSource] Searching for enabled RSS feeds...`);
@@ -41,11 +48,24 @@ export class RssSource implements NewsSource {
                 return [];
             }
 
-            // 2. Select Feeds (Random Subset)
-            // To ensure diversity but also reliability, we pick up to 3 feeds.
-            // Shuffling ensures we don't always pick the same ones if we have many.
-            const selectedFeeds = this.shuffle(feeds).slice(0, 3);
-            console.log(`[RssSource] Selected feeds: ${selectedFeeds.map(f => f.name).join(', ')}`);
+            // 2. Select Feeds (Priority + Reliability)
+            const sortedFeeds = feeds.sort((a, b) => {
+                const aPriority = typeof a.priority === 'number' ? a.priority : 5;
+                const bPriority = typeof b.priority === 'number' ? b.priority : 5;
+                if (aPriority !== bPriority) return aPriority - bPriority;
+
+                const aFailures = typeof a.consecutive_failures === 'number' ? a.consecutive_failures : 0;
+                const bFailures = typeof b.consecutive_failures === 'number' ? b.consecutive_failures : 0;
+                if (aFailures !== bFailures) return aFailures - bFailures;
+
+                const aLast = a.last_success_at as { toDate?: () => Date } | Date | undefined;
+                const bLast = b.last_success_at as { toDate?: () => Date } | Date | undefined;
+                const aTime = aLast instanceof Date ? aLast.getTime() : typeof aLast?.toDate === 'function' ? aLast.toDate().getTime() : 0;
+                const bTime = bLast instanceof Date ? bLast.getTime() : typeof bLast?.toDate === 'function' ? bLast.toDate().getTime() : 0;
+                return bTime - aTime;
+            });
+            const selectedFeeds = sortedFeeds.slice(0, this.maxFeedsPerCycle);
+            console.log(`[RssSource] Selected feeds: ${selectedFeeds.map(f => f.name || f.source_name).join(', ')}`);
 
             const allCandidates: ArticleCandidate[] = [];
 
@@ -72,7 +92,10 @@ export class RssSource implements NewsSource {
                             cleanUrl: normalizeUrl(item.link),
                             sourceName: feed.source_name || feed.name || 'RSS',
                             publishedAt: typeof item.pubDate === 'string' ? item.pubDate : undefined,
-                            feedId: feed.id
+                            feedId: feed.id,
+                            feedLanguage: feed.language,
+                            sourceType: feed.source_type,
+                            feedPriority: feed.priority
                         });
                     }
                 } catch (e) {
@@ -93,11 +116,4 @@ export class RssSource implements NewsSource {
         }
     }
 
-    private shuffle<T>(array: T[]): T[] {
-        for (let i = array.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [array[i], array[j]] = [array[j], array[i]];
-        }
-        return array;
-    }
 }

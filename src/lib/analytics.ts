@@ -211,8 +211,86 @@ export async function getAnalyticsData(): Promise<DashboardData> {
         else nextPostWindow = "Overdue";
     }
 
-    // 6. Actionable Insights
+    // 6. Quality Metrics (Last 24h)
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    const qualitySnap = await dbAdmin.collection("news")
+        .where("created_at", ">=", Timestamp.fromDate(yesterday))
+        .get();
+
+    let totalQualityScore = 0;
+    let qualityCount = 0;
+    const qualityDistribution = { high: 0, medium: 0, low: 0 };
+    const issueCounts = new Map<string, number>();
+
+    let totalPublished = 0;
+    let totalQueued = 0;
+    let totalDropped = 0;
+
+    qualitySnap.docs.forEach(doc => {
+        const data = doc.data();
+        const score = typeof data.quality_score === 'number' ? data.quality_score : null;
+        const tier = data.quality_tier as 'high' | 'medium' | 'low' | undefined;
+        const issues = Array.isArray(data.quality_issues) ? data.quality_issues : [];
+        const status = data.status as string | undefined;
+
+        if (score !== null) {
+            totalQualityScore += score;
+            qualityCount++;
+
+            if (tier === 'high' || score >= 80) {
+                qualityDistribution.high++;
+            } else if (tier === 'medium' || score >= 60) {
+                qualityDistribution.medium++;
+            } else {
+                qualityDistribution.low++;
+            }
+        }
+
+        issues.forEach((issue: string) => {
+            issueCounts.set(issue, (issueCounts.get(issue) || 0) + 1);
+        });
+
+        if (status === 'published') totalPublished++;
+        else if (status === 'processing') totalQueued++;
+        else if (status === 'blocked' || status === 'blocked_retry') totalDropped++;
+    });
+
+    const avgQualityScore = qualityCount > 0 ? Math.round(totalQualityScore / qualityCount) : 0;
+    const topIssues = Array.from(issueCounts.entries())
+        .map(([issue, count]) => ({ issue, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10);
+
+    const quality = {
+        avgQualityScore,
+        qualityDistribution,
+        topIssues,
+        totalDropped,
+        totalQueued,
+        totalPublished
+    };
+
+    // 7. Actionable Insights
     const insights: { type: 'info' | 'warning' | 'critical'; message: string; action?: string }[] = [];
+
+    // Quality-based insights
+    if (avgQualityScore < 60 && qualityCount > 5) {
+        insights.push({
+            type: 'warning',
+            message: `Average quality score is low (${avgQualityScore}). Consider adjusting quality thresholds.`,
+            action: 'check_settings'
+        });
+    }
+
+    if (totalDropped > totalPublished && totalPublished > 0) {
+        insights.push({
+            type: 'warning',
+            message: `High drop rate: ${totalDropped} dropped vs ${totalPublished} published. Quality filters may be too strict.`,
+            action: 'check_settings'
+        });
+    }
 
     // Stalled / Manual - with detailed reason
     if (systemStatus === 'stalled' || systemStatus === 'manual') {
@@ -327,6 +405,7 @@ export async function getAnalyticsData(): Promise<DashboardData> {
             lastRunTime: typeof recentRuns[0]?.started_at === 'string' ? recentRuns[0].started_at : ""
         },
         performance,
+        quality,
         cron: {
             runs: runsTodaySnap.docs.slice(0, 20).map(d => {
                 const data = d.data() as RssRunLog;

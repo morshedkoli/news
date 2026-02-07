@@ -39,6 +39,19 @@ export interface RssSettings {
     update_interval_minutes?: number; // Configurable posting interval (default 30)
     start_time?: string; // Start time in HH:MM format (e.g., "06:00")
 
+    // Runtime Controls
+    require_ai_online?: boolean;
+    global_safety_delay_minutes?: number;
+    max_feeds_per_cycle?: number;
+    master_interval_minutes?: number;
+
+    // Quality Controls
+    min_publish_score?: number;
+    min_queue_score?: number;
+    require_image_for_publish?: boolean;
+    summary_min_length?: number;
+    translation_retry_enabled?: boolean;
+
     // Stats & Health
     consecutive_failed_runs?: number;
     last_successful_run?: unknown;

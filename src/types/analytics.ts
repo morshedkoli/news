@@ -5,10 +5,10 @@ export interface DashboardData {
         postsToday: number;
         target: number;
         successRate: number;
-        systemStatus: 'healthy' | 'degraded' | 'stalled' | 'manual'; // Added 'manual'
+        systemStatus: 'healthy' | 'degraded' | 'stalled' | 'manual';
         activeFeeds: number;
         aiUsageCount: number;
-        nextPostWindow?: string; // New
+        nextPostWindow?: string;
     };
     posting: {
         hourly: { hour: string; count: number }[];
@@ -16,18 +16,28 @@ export interface DashboardData {
         sourceCounts: { name: string; count: number }[];
         avgPostsPerDay: number;
     };
-    // New Section: Deep System Health
     system: {
         lockStatus: { active: boolean; expiresAt: string | null; ttlSeconds: number };
         consecutiveFailures: number;
         lastRunStatus: string;
         lastRunTime: string;
     };
-    // New Section: Performance Metrics
     performance: {
-        dedupRate: number; // % of items rejected as duplicates
-        aiFailureRate: number; // % of AI summaries failed
+        dedupRate: number;
+        aiFailureRate: number;
         retriesTriggered: number;
+    };
+    quality: {
+        avgQualityScore: number;
+        qualityDistribution: {
+            high: number;
+            medium: number;
+            low: number;
+        };
+        topIssues: { issue: string; count: number }[];
+        totalDropped: number;
+        totalQueued: number;
+        totalPublished: number;
     };
     cron: {
         runs: (RssRunLog & { id: string })[];
@@ -42,5 +52,5 @@ export interface DashboardData {
         lastPost: string | null;
         failureCount: number;
     }[];
-    insights: { type: 'info' | 'warning' | 'critical'; message: string; action?: string }[]; // Enhanced insights
+    insights: { type: 'info' | 'warning' | 'critical'; message: string; action?: string }[];
 }
