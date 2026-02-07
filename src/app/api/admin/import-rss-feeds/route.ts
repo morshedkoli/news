@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { dbAdmin } from "@/lib/firebase-admin";
 
 // Top 10 RSS Feeds
@@ -75,7 +75,7 @@ const RSS_FEEDS = [
     }
 ];
 
-export async function POST(req: NextRequest) {
+export async function POST() {
     try {
         console.log("📥 Starting bulk import of RSS feeds...");
 
@@ -110,11 +110,12 @@ export async function POST(req: NextRequest) {
                 await dbAdmin.collection("rss_feeds").add(feedData);
                 console.log(`✅ Added: ${feed.name}`);
                 results.success.push(feed.name);
-            } catch (error: any) {
-                console.error(`❌ Failed to add ${feed.name}:`, error.message);
+            } catch (error: unknown) {
+                const message = error instanceof Error ? error.message : "Unknown error";
+                console.error(`❌ Failed to add ${feed.name}:`, message);
                 results.errors.push({
                     name: feed.name,
-                    error: error.message
+                    error: message
                 });
             }
         }
@@ -135,17 +136,18 @@ export async function POST(req: NextRequest) {
             details: results
         });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error("💥 Bulk import failed:", error);
         return NextResponse.json({
             status: "failed",
-            error: error.message
+            error: message
         }, { status: 500 });
     }
 }
 
 // GET endpoint to view feeds that will be imported
-export async function GET(req: NextRequest) {
+export async function GET() {
     return NextResponse.json({
         message: "RSS Feeds Bulk Import Endpoint",
         feeds_to_import: RSS_FEEDS.length,

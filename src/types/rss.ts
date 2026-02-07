@@ -17,10 +17,10 @@ export interface RssFeed {
     cooldown_minutes: number; // Waiting time between fetches
 
     // State Tracking
-    last_fetched_at?: any;      // Timestamp (replaces last_checked_at)
-    last_checked_at?: any;      // Legacy Compatibility
-    last_success_at?: any;      // Timestamp
-    cooldown_until?: any;       // Firestore Timestamp (Temporary block)
+    last_fetched_at?: unknown;      // Timestamp (replaces last_checked_at)
+    last_checked_at?: unknown;      // Legacy Compatibility
+    last_success_at?: unknown;      // Timestamp
+    cooldown_until?: unknown;       // Firestore Timestamp (Temporary block)
     consecutive_failures?: number;
     failure_count?: number;     // Legacy alias
     consecutive_empty_runs?: number;
@@ -33,7 +33,7 @@ export interface RssFeed {
 
 // RSS Settings - Global state for configurable posting interval
 export interface RssSettings {
-    last_news_posted_at?: any; // Firestore Timestamp - Global interval tracker
+    last_news_posted_at?: unknown; // Firestore Timestamp - Global interval tracker
     total_posts_today?: number;
     last_reset_date?: string; // For daily stats reset (YYYY-MM-DD)
     update_interval_minutes?: number; // Configurable posting interval (default 30)
@@ -41,16 +41,16 @@ export interface RssSettings {
 
     // Stats & Health
     consecutive_failed_runs?: number;
-    last_successful_run?: any;
+    last_successful_run?: unknown;
     avg_time_between_posts?: number;
-    last_run_at?: any;
+    last_run_at?: unknown;
 
     // Cron request tracking
     cron_requests_count?: number;
 
     // Temporary State
     temp_disabled_sources?: string[];
-    global_lock_until?: any; // Timestamp
+    global_lock_until?: unknown; // Timestamp
 }
 
 // RSS Item from feed parsing

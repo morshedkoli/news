@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { fetchArticle } from "@/lib/news-fetcher";
 import { generateContent } from "@/lib/ai-engine";
-import { normalizeUrl, checkDuplicate, generateContentHash } from '@/lib/news-dedup';
+import type { AiResponse } from "@/types/ai";
+import { normalizeUrl, checkDuplicate } from '@/lib/news-dedup';
 import { dbAdmin } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 
@@ -143,7 +144,7 @@ export async function POST(req: Request) {
         }
 
         let generated = null;
-        let aiKey: any = null;
+        let aiKey: AiResponse | null = null;
         try {
             aiKey = await generateContent(userPrompt, {
                 systemPrompt: systemPrompt,
@@ -170,8 +171,9 @@ export async function POST(req: Request) {
 
                     try {
                         generated = JSON.parse(clean);
-                    } catch (parseErr: any) {
-                        console.warn("JSON Parse Failed (Pass 1). Attempting cleanup...", parseErr.message);
+                    } catch (parseErr: unknown) {
+                        const parseMessage = parseErr instanceof Error ? parseErr.message : "Unknown error";
+                        console.warn("JSON Parse Failed (Pass 1). Attempting cleanup...", parseMessage);
 
                         // Attempt 2: Escape unescaped newlines inside strings
                         try {
@@ -179,7 +181,7 @@ export async function POST(req: Request) {
                             // But better to trust Regex fallback if JSON is broken
                             const cleaner = clean.replace(/\n/g, "\\n");
                             generated = JSON.parse(cleaner);
-                        } catch (e2) {
+                        } catch {
                             // Attempt 3: Regex Fallback
                             console.warn("JSON Parse Failed (Pass 2). Attempting Regex fallback...");
 
@@ -279,31 +281,36 @@ ${textToSummarize}`;
                 summary: article.excerpt || article.textContent.substring(0, 500) + "...",
                 category: article.category || "সাধারণ"
             };
-            aiKey = { providerUsed: 'Fallback', modelUsed: 'None' };
         }
+
+        const providerInfo = aiKey
+            ? { provider: aiKey.providerUsed, model: aiKey.modelUsed }
+            : { provider: 'Fallback', model: 'None' };
 
         return NextResponse.json({
             original: article,
             generated: generated,
             provider_info: {
-                provider: aiKey?.providerUsed || 'Unknown',
-                model: aiKey?.modelUsed || 'Unknown'
+                provider: providerInfo.provider,
+                model: providerInfo.model
             },
-            language_detected: (aiKey?.providerUsed !== 'Fallback') ? language : null
+            language_detected: providerInfo.provider !== 'Fallback' ? language : null
         });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const err = error as { code?: unknown; message?: string };
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error("API Error:", error);
 
         // Handle Firestore "value too large" error specifically
-        if (error.code === 3 || error.message?.includes("too large") || error.code === 'INVALID_ARGUMENT') {
+        if (err.code === 3 || err.message?.includes("too large") || err.code === 'INVALID_ARGUMENT') {
             return NextResponse.json({
                 error: "এই লিংকের খবরটি প্রক্রিয়াকরণ করা যাচ্ছে না (URL too long)",
                 details: "The URL is too long for the database index."
             }, { status: 400 });
         }
 
-        return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
+        return NextResponse.json({ error: message || "Internal Server Error" }, { status: 500 });
     }
 }
 

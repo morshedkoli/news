@@ -1,10 +1,10 @@
-import { ActionCodeSettings } from 'firebase-admin/auth';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
-import { NewsSource, ArticleCandidate } from './sources/news-source';
+import { ArticleCandidate } from './sources/news-source';
 import { RssSource } from './sources/rss-source';
 import { dbAdmin } from '../firebase-admin';
 import { sendNotification } from '../notifications';
-import { validateNewsContent } from './validation';
+import { normalizeCategory } from '../news-fetcher';
+import { isBanglaText, validateNewsContent } from './validation';
 import crypto from 'crypto';
 
 interface RunResult {
@@ -32,11 +32,17 @@ export class NewsFetchOrchestrator {
         this.rssSource = new RssSource();
     }
 
-    async run(force = false, dryRun = false): Promise<RunResult> {
+    async run(): Promise<RunResult> {
         this.log(`[Orchestrator] Run ${this.runId} started. Mode=RSS_ONLY`);
 
         // 1. Process Retries (Before new fetch)
         await this.processRetries();
+
+        // 1.5 Publish scheduled queue (if due)
+        const scheduledResult = await this.publishScheduledQueue();
+        if (scheduledResult.published) {
+            return this.finish(true, 'queue', scheduledResult.newsId, 'scheduled_publish');
+        }
 
         // 2. Fetch Candidates (RSS Only)
         // RssSource now handles feed selection/rotation internally
@@ -48,6 +54,11 @@ export class NewsFetchOrchestrator {
 
         // 2. Process Candidates
         this.itemsChecked = candidates.length;
+
+        let publishedOnce = false;
+        let publishedId: string | undefined;
+        let queuedCount = 0;
+        const queueStart = Date.now() + 30 * 60 * 1000;
 
         for (const candidate of candidates) {
             // A. Deduplication (Strict)
@@ -71,11 +82,16 @@ export class NewsFetchOrchestrator {
                         candidate.content = fetchResult.data.content;
                         candidate.excerpt = fetchResult.data.excerpt;
                         if (!candidate.image && fetchResult.data.image) candidate.image = fetchResult.data.image;
+                        if (fetchResult.data.category) {
+                            candidate.category = normalizeCategory(fetchResult.data.category) || candidate.category;
+                        }
                     }
                 } catch (e) {
                     this.log(`[Orchestrator] Content Fetch Failed (Non-fatal): ${e}`);
                 }
             }
+
+            const hasEnglishLetters = (text: string) => /[A-Za-z]/.test(text);
 
             // C. AI Summary (Non-Blocking)
             let summary = candidate.summary || "Pending Summary";
@@ -84,9 +100,9 @@ export class NewsFetchOrchestrator {
             if (fullContent || candidate.summary) {
                 try {
                     const aiModule = await import('../ai-engine');
-                    const aiResult = await aiModule.generateContent(
-                        `Summarize this news article in 2-3 sentences max. Language: Bengali (if content is Bengali) or English. Content: ${fullContent || candidate.summary}`
-                        , { feature: 'news_summary' });
+                    const aiResult = await aiModule.generateContentWithFallback(
+                        `Summarize this news article in 2-3 sentences in Bengali (Bangla) only. Content: ${fullContent || candidate.summary}`
+                        , { feature: 'news_summary' }, 2);
 
                     if (aiResult?.content) {
                         summary = aiResult.content;
@@ -101,11 +117,105 @@ export class NewsFetchOrchestrator {
                 }
             }
 
-            // D. Validate Content (STRICT GATE)
+            // D. Translate if Summary/Title is English
+            const titleNeedsTranslation = candidate.title && (hasEnglishLetters(candidate.title) || !isBanglaText(candidate.title));
+            const summaryNeedsTranslation = summary && (hasEnglishLetters(summary) || !isBanglaText(summary));
+
+            if (titleNeedsTranslation || summaryNeedsTranslation) {
+                try {
+                    const aiModule = await import('../ai-engine');
+                    const translationPrompt = `Translate the following title and summary to Bengali (Bangla). Return ONLY JSON in this format: {"title":"...","summary":"..."}.
+Title: ${candidate.title}
+Summary: ${summary}`;
+
+                    const translation = await aiModule.generateContentWithFallback(
+                        translationPrompt,
+                        { feature: 'news_translation' },
+                        2
+                    );
+
+                    if (translation?.content) {
+                        const jsonStart = translation.content.indexOf('{');
+                        const jsonEnd = translation.content.lastIndexOf('}');
+                        if (jsonStart !== -1 && jsonEnd !== -1) {
+                            const jsonStr = translation.content.substring(jsonStart, jsonEnd + 1);
+                            const translated = JSON.parse(jsonStr) as { title?: string; summary?: string };
+
+                            if (translated.title && translated.summary) {
+                                const translatedTitle = translated.title.trim();
+                                const translatedSummary = translated.summary.trim();
+
+                                const translationOk =
+                                    translatedTitle.length > 0
+                                    && translatedSummary.length > 0
+                                    && !hasEnglishLetters(translatedTitle)
+                                    && !hasEnglishLetters(translatedSummary)
+                                    && isBanglaText(translatedTitle)
+                                    && isBanglaText(translatedSummary);
+
+                                if (translationOk) {
+                                    candidate.title = translatedTitle;
+                                    summary = translatedSummary;
+                                    candidate.summary = translatedSummary;
+                                } else {
+                                    this.log(`[Orchestrator] ⛔ Translation Invalid: ${candidate.title}`);
+                                    this.skipReasons.push('dropped: TRANSLATION_INVALID');
+                                    continue;
+                                }
+                            } else {
+                                this.log(`[Orchestrator] ⛔ Translation Missing Fields: ${candidate.title}`);
+                                this.skipReasons.push('dropped: TRANSLATION_MISSING_FIELDS');
+                                continue;
+                            }
+                        } else {
+                            this.log(`[Orchestrator] ⛔ Translation JSON Parse Failed: ${candidate.title}`);
+                            this.skipReasons.push('dropped: TRANSLATION_PARSE_FAILED');
+                            continue;
+                        }
+                    } else {
+                        this.log(`[Orchestrator] ⛔ Translation Failed: ${candidate.title}`);
+                        this.skipReasons.push('dropped: TRANSLATION_FAILED');
+                        continue;
+                    }
+                } catch (e) {
+                    this.log(`[Orchestrator] ⛔ Translation Error: ${candidate.title}`);
+                    this.skipReasons.push('dropped: TRANSLATION_ERROR');
+                    continue;
+                }
+            }
+
+            let normalizedCategory = normalizeCategory(candidate.category || null);
+            if (!normalizedCategory && candidate.category) {
+                try {
+                    const aiModule = await import('../ai-engine');
+                    const categoryTranslation = await aiModule.generateContentWithFallback(
+                        `Translate this category to Bengali (Bangla). Return only the category name.
+Category: ${candidate.category}`,
+                        { feature: 'news_category_translation' },
+                        2
+                    );
+
+                    const translatedCategory = categoryTranslation?.content?.trim() || "";
+                    normalizedCategory = normalizeCategory(translatedCategory) || (/[ঀ-৿]/.test(translatedCategory) ? translatedCategory : null);
+                } catch (e) {
+                    this.log(`[Orchestrator] Category Translation Failed: ${candidate.category} (${e})`);
+                }
+            }
+
+            candidate.category = normalizedCategory || "সাধারণ";
+
+            // E. Validate Content (STRICT GATE)
             const validation = validateNewsContent(candidate);
             if (!validation.isValid) {
                 // Check if we should Drop completely or just Block
-                const dropReasons = ['TITLE_NOT_BANGLA', 'SUMMARY_EMPTY', 'SUMMARY_NOT_BANGLA', 'SUMMARY_TOO_SHORT', 'SUMMARY_PENDING_OR_PLACEHOLDER'];
+                const dropReasons = [
+                    'TITLE_NOT_BANGLA',
+                    'SUMMARY_EMPTY',
+                    'SUMMARY_NOT_BANGLA',
+                    'SUMMARY_TOO_SHORT',
+                    'SUMMARY_PENDING_OR_PLACEHOLDER',
+                    'ENGLISH_DETECTED'
+                ];
                 const shouldDrop = validation.blockReasons.some(r => dropReasons.includes(r));
 
                 if (shouldDrop) {
@@ -116,46 +226,54 @@ export class NewsFetchOrchestrator {
                     continue;
                 }
 
-                // For other reasons (e.g. maybe specific blacklisted keywords if added later), keep blocking logic
-                this.log(`[Orchestrator] ⛔ BLOCKED: ${candidate.title}`);
+                // For other reasons (e.g. maybe specific blacklisted keywords if added later), drop without saving
+                this.log(`[Orchestrator] ⛔ BLOCKED (Drop): ${candidate.title}`);
                 this.log(`  Reasons: ${validation.blockReasons.join(", ")}`);
 
-                this.skipReasons.push(`blocked: ${validation.blockReasons.join(", ")}`);
+                this.skipReasons.push(`dropped: ${validation.blockReasons.join(", ")}`);
 
-                // Save as Blocked
-                await this.saveBlockedNews(candidate, contentHash, urlHash, aiStatus, validation.blockReasons);
-
-                // Allow pipeline to continue to next item
+                // DO NOT SAVE to DB
                 continue;
             }
 
             // Require feature image before publishing
             if (!candidate.image || (typeof candidate.image === 'string' && candidate.image.trim().length === 0)) {
-                this.log(`[Orchestrator] ⛔ BLOCKED (No Image): ${candidate.title}`);
-                const reasons = [...(validation.blockReasons || []), 'IMAGE_MISSING'];
-                this.skipReasons.push(`blocked: IMAGE_MISSING`);
-                await this.saveBlockedNews(candidate, contentHash, urlHash, aiStatus, reasons);
+                this.log(`[Orchestrator] 🗑️ DROPPED (No Image): ${candidate.title}`);
+                this.skipReasons.push('dropped: IMAGE_MISSING');
+                // DO NOT SAVE to DB
                 continue;
             }
 
-            // E. Publish
+            // F. Publish or Queue
             try {
                 // Ensure we pass the updated summary
                 candidate.summary = summary;
 
-                const newsId = await this.publish(candidate, contentHash, urlHash, aiStatus);
-                this.log(`[Orchestrator] Published: ${candidate.title} (${newsId})`);
+                if (!publishedOnce) {
+                    const newsId = await this.publish(candidate, contentHash, urlHash, aiStatus);
+                    this.log(`[Orchestrator] Published: ${candidate.title} (${newsId})`);
+                    publishedOnce = true;
+                    publishedId = newsId;
 
-                if (candidate.feedId) {
-                    await this.updateFeedSuccess(candidate.feedId);
+                    if (candidate.feedId) {
+                        await this.updateFeedSuccess(candidate.feedId);
+                    }
+                } else {
+                    queuedCount += 1;
+                    const scheduledAt = Timestamp.fromDate(new Date(queueStart + ((queuedCount - 1) * 30 * 60 * 1000)));
+                    await this.saveQueuedNews(candidate, contentHash, urlHash, aiStatus, scheduledAt);
+                    this.log(`[Orchestrator] Queued: ${candidate.title} (in ${queuedCount * 30}m)`);
                 }
-
-                return this.finish(true, 'rss', newsId, 'success');
-            } catch (e: any) {
-                this.log(`[Orchestrator] Publish Failed: ${e}`);
-                this.skipReasons.push(`publish_error: ${e.message}`);
+            } catch (e: unknown) {
+                const message = e instanceof Error ? e.message : String(e);
+                this.log(`[Orchestrator] Publish Failed: ${message}`);
+                this.skipReasons.push(`publish_error: ${message}`);
                 continue;
             }
+        }
+
+        if (publishedOnce) {
+            return this.finish(true, 'rss', publishedId, queuedCount > 0 ? 'published_and_queued' : 'success');
         }
 
         return this.finish(false, 'rss', undefined, 'all_candidates_skipped_or_failed');
@@ -209,15 +327,20 @@ export class NewsFetchOrchestrator {
         return crypto.createHash('md5').update(text).digest('hex');
     }
 
-    private async saveBlockedNews(candidate: ArticleCandidate, contentHash: string, urlHash: string, aiStatus: string, reasons: string[]) {
+    private async saveQueuedNews(candidate: ArticleCandidate, contentHash: string, urlHash: string, aiStatus: string, scheduledAt: Timestamp) {
         try {
-            // Retry Logic for Language Blocks
-            const isLanguageBlock = reasons.some(r => r.includes('NOT_BANGLA'));
-            const status = isLanguageBlock ? 'blocked_retry' : 'blocked';
-            const retryFields = isLanguageBlock ? {
-                retry_count: 0,
-                next_retry_at: Timestamp.fromDate(new Date(Date.now() + 10 * 60 * 1000)), // 10 mins
-            } : {};
+            let categoryId: string | undefined;
+            let categorySlug: string | undefined;
+            const categoryName = candidate.category || "সাধারণ";
+
+            try {
+                const { CategoryService } = await import('../categories');
+                const catData = await CategoryService.ensureCategory(categoryName);
+                categoryId = catData.id;
+                categorySlug = catData.slug;
+            } catch (e) {
+                console.error("Queue Category Error:", e);
+            }
 
             await dbAdmin.collection('news').add({
                 title: candidate.title,
@@ -229,21 +352,109 @@ export class NewsFetchOrchestrator {
                 normalized_url_hash: urlHash,
                 content_hash: contentHash,
                 source_name: candidate.sourceName,
-                blocked_at: Timestamp.now(),
                 created_at: Timestamp.now(),
-                published_at: null, // ENSURE NULL
-                push_sent: false,   // ENSURE FALSE
-                category: candidate.category || "General",
+                published_at: null,
+                scheduled_at: scheduledAt,
+                push_sent: false,
+                category: categoryName,
+                category_name: categoryName,
+                categoryId,
+                categorySlug,
                 is_rss: true,
                 source_type: 'rss_fetch',
-                summary_status: aiStatus,
-                status: status,
-                block_reasons: reasons,
-                importance_score: 0,
-                ...retryFields
+                summary_status: aiStatus === 'success' ? 'complete' : 'pending',
+                ai_status: aiStatus,
+                importance_score: 30,
+                likes: 0,
+                status: 'processing'
             });
         } catch (e) {
-            console.error("Failed to save blocked news:", e);
+            console.error("Failed to save queued news:", e);
+        }
+    }
+
+    private async publishScheduledQueue(): Promise<{ published: boolean; newsId?: string }> {
+        try {
+            const snap = await dbAdmin.collection('news')
+                .where('status', '==', 'processing')
+                .limit(10)
+                .get();
+
+            if (snap.empty) return { published: false };
+
+            const now = Date.now();
+            const due = snap.docs
+                .map(d => ({ id: d.id, data: d.data() }))
+                .filter(d => d.data.scheduled_at)
+                .map(d => {
+                    const scheduledAt = d.data.scheduled_at as { toDate?: () => Date } | Date;
+                    const scheduledDate = scheduledAt instanceof Date
+                        ? scheduledAt
+                        : typeof scheduledAt?.toDate === 'function'
+                            ? scheduledAt.toDate()
+                            : null;
+                    return { ...d, scheduledDate };
+                })
+                .filter(d => d.scheduledDate && d.scheduledDate.getTime() <= now)
+                .sort((a, b) => (a.scheduledDate?.getTime() || 0) - (b.scheduledDate?.getTime() || 0));
+
+            if (due.length === 0) return { published: false };
+
+            const next = due[0];
+            const newsRef = dbAdmin.collection('news').doc(next.id);
+            const statsRef = dbAdmin.collection('system_stats').doc('rss_settings');
+
+            await dbAdmin.runTransaction(async (t) => {
+                const doc = await t.get(newsRef);
+                if (!doc.exists) return;
+                const data = doc.data();
+                const categoryId = data?.categoryId;
+
+                t.update(newsRef, {
+                    published_at: FieldValue.serverTimestamp(),
+                    status: 'published'
+                });
+
+                t.set(statsRef, {
+                    last_news_posted_at: FieldValue.serverTimestamp(),
+                    last_run_at: FieldValue.serverTimestamp(),
+                    total_posts_today: FieldValue.increment(1),
+                    consecutive_failed_runs: 0
+                }, { merge: true });
+
+                if (categoryId) {
+                    const { CategoryService } = await import('../categories');
+                    await CategoryService.incrementCategoryCount(categoryId, t);
+                }
+            });
+
+            // Notify App Users
+            try {
+                const data = next.data;
+                await sendNotification(data.title || "New News Available", data.summary || "New News Available", next.id);
+            } catch (e) {
+                console.error("Failed to send notification:", e);
+            }
+
+            // Auto-post to Facebook pages (non-blocking)
+            try {
+                const data = next.data;
+                const { FacebookService } = await import('../facebook-service');
+                await FacebookService.postNewsToPages(
+                    next.id,
+                    data.title || 'Untitled',
+                    data.summary || '',
+                    data.image,
+                    data.source_url
+                );
+            } catch (e) {
+                console.error("Failed to post to Facebook:", e);
+            }
+
+            return { published: true, newsId: next.id };
+        } catch (e) {
+            console.error("Failed to publish scheduled queue:", e);
+            return { published: false };
         }
     }
 
@@ -270,10 +481,11 @@ export class NewsFetchOrchestrator {
         try {
             await dbAdmin.runTransaction(async (t) => {
                 const statsSnap = await t.get(statsRef);
-                const statsData = statsSnap.exists ? statsSnap.data() : {} as any;
+                const statsData = statsSnap.exists ? (statsSnap.data() as Record<string, unknown>) : {};
 
-                const intervalMinutes = (statsData.update_interval_minutes as number) || 40; // default 40
-                const lastPosted = statsData.last_news_posted_at ? statsData.last_news_posted_at.toDate().getTime() : 0;
+                const intervalMinutes = typeof statsData.update_interval_minutes === 'number' ? statsData.update_interval_minutes : 40; // default 40
+                const lastPostedRaw = statsData.last_news_posted_at as { toDate?: () => Date } | undefined;
+                const lastPosted = lastPostedRaw?.toDate ? lastPostedRaw.toDate().getTime() : 0;
 
                 if (Date.now() - lastPosted < intervalMinutes * 60 * 1000) {
                     // Cooldown active - abort transaction
@@ -341,8 +553,9 @@ export class NewsFetchOrchestrator {
             }
 
             return newsRef.id;
-        } catch (e: any) {
-            if (e.message === 'cooldown_active') {
+        } catch (e: unknown) {
+            const message = e instanceof Error ? e.message : "Unknown error";
+            if (message === 'cooldown_active') {
                 throw new Error('publish_cooldown_active');
             }
             throw e;
@@ -429,7 +642,7 @@ Original Summary: ${data.summary}`;
                         last_retry_error: "Translation failed or invalid"
                     });
 
-                } catch (e: any) {
+                } catch (e: unknown) {
                     console.error(`[Orchestrator] Retry Error for ${docId}:`, e);
                     await dbAdmin.collection('news').doc(docId).update({
                         retry_count: FieldValue.increment(1),

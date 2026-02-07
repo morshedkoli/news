@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { FacebookService } from '@/lib/facebook-service';
+import type { FacebookPageConnection } from '@/types/facebook';
 import { authAdmin, dbAdmin } from '@/lib/firebase-admin';
 
 /**
@@ -35,7 +36,7 @@ export async function POST(req: NextRequest) {
         const pageConnection = {
             id: pageDoc.id,
             ...pageDoc.data()
-        } as any;
+        } as FacebookPageConnection;
 
         // Create test post data
         const testPostData = {
@@ -53,12 +54,13 @@ export async function POST(req: NextRequest) {
             message: 'Test post created successfully!'
         });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error('Test post error:', error);
         return NextResponse.json(
             {
                 success: false,
-                error: error.message || 'Failed to create test post'
+                error: message || 'Failed to create test post'
             },
             { status: 500 }
         );

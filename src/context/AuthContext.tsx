@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useState } from "react";
 import { User, onAuthStateChanged, signOut as firebaseSignOut } from "firebase/auth";
 import { auth, db } from "@/lib/firebase";
 import { doc, getDoc } from "firebase/firestore";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 
 interface AuthContextType {
     user: User | null;
@@ -45,12 +45,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
                         setIsAdmin(false);
                         router.push("/login?error=unauthorized");
                     }
-                } catch (error: any) {
+                } catch (error: unknown) {
+                    const err = error as { code?: string; message?: string };
                     console.error("Error checking admin status:", error);
                     setUser(null);
                     setIsAdmin(false);
                     // Check for permission-denied error specifically
-                    if (error?.code === 'permission-denied' || error?.message?.includes('Missing or insufficient permissions')) {
+                    if (err?.code === 'permission-denied' || err?.message?.includes('Missing or insufficient permissions')) {
                         await firebaseSignOut(auth);
                         router.push("/login?error=permission-error");
                     }

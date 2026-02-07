@@ -50,10 +50,11 @@ export async function POST(req: NextRequest) {
             unlockedBy: decoded.email
         });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error("Failed to unlock system:", error);
         return NextResponse.json(
-            { error: error.message || "Failed to unlock system" },
+            { error: message || "Failed to unlock system" },
             { status: 500 }
         );
     }

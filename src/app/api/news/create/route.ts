@@ -4,6 +4,8 @@ import { sendNotification } from "@/lib/notifications";
 import { FieldValue } from "firebase-admin/firestore";
 import { normalizeUrl, generateUrlHash, generateContentHash } from '@/lib/news-dedup';
 import { validateNewsContent } from '@/lib/news/validation';
+import { normalizeCategory } from '@/lib/news-fetcher';
+import type { ArticleCandidate } from '@/lib/news/sources/news-source';
 
 export async function POST(req: Request) {
     try {
@@ -33,14 +35,23 @@ export async function POST(req: Request) {
 
         // 2. Validate Payload
         const body = await req.json();
-        const { title, summary, image, source_url, source_name, created_by, category } = body;
+        const { title, summary, image, source_url, source_name, created_by, category, content, excerpt } = body;
 
         if (!title || !summary || !source_url) {
             return NextResponse.json({ error: "Missing required fields (title, summary, source_url)" }, { status: 400 });
         }
 
         // Validate language and summary content
-        const validation = validateNewsContent({ title, summary } as any);
+        const validationCandidate: ArticleCandidate = {
+            title,
+            summary,
+            content,
+            excerpt,
+            sourceUrl: source_url,
+            cleanUrl: normalizeUrl(source_url),
+            sourceName: source_name || "Unknown",
+        };
+        const validation = validateNewsContent(validationCandidate);
         if (!validation.isValid) {
             return NextResponse.json({ error: 'Validation failed', reasons: validation.blockReasons }, { status: 400 });
         }
@@ -50,6 +61,25 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'Missing required field: image' }, { status: 400 });
         }
 
+        // Normalize Category (Bangla only)
+        let resolvedCategory = normalizeCategory(category || null) || null;
+        if (!resolvedCategory && category) {
+            try {
+                const { generateContentWithFallback } = await import('@/lib/ai-engine');
+                const translated = await generateContentWithFallback(
+                    `Translate this category to Bengali (Bangla). Return only the category name.
+Category: ${category}`,
+                    { feature: 'news_category_translation' },
+                    2
+                );
+                const translatedCategory = translated?.content?.trim() || "";
+                resolvedCategory = normalizeCategory(translatedCategory) || (/[ঀ-৿]/.test(translatedCategory) ? translatedCategory : null);
+            } catch (e) {
+                console.error("Category translation failed:", e);
+            }
+        }
+        resolvedCategory = resolvedCategory || "সাধারণ";
+
         // Generate Metadata
         const normalized_url = normalizeUrl(source_url);
         const normalized_url_hash = generateUrlHash(normalized_url);
@@ -58,7 +88,7 @@ export async function POST(req: Request) {
         // 3. Prepare Data
         console.log(`Creating news: ${title} by ${created_by}`);
 
-        const newsData: any = {
+        const newsData: Record<string, unknown> = {
             title,
             summary,
             image: image || "",
@@ -68,17 +98,17 @@ export async function POST(req: Request) {
             content_hash,           // Useful for content dedup
             source_name: source_name || "Unknown",
             created_by: created_by || decodedToken.email,
-            category: category || "general",
+            category: resolvedCategory,
             likes: 0,
             is_rss: false
         };
 
         // Resolve Category (ensureCategory may create if missing)
-        let catData: any = null;
-        if (category) {
+        let catData: { id: string; slug: string; name: string } | null = null;
+        if (resolvedCategory) {
             try {
                 const { CategoryService } = await import('@/lib/categories');
-                catData = await CategoryService.ensureCategory(category);
+                catData = await CategoryService.ensureCategory(resolvedCategory);
                 newsData.categoryId = catData.id;
                 newsData.categorySlug = catData.slug;
             } catch (err) {
@@ -93,9 +123,10 @@ export async function POST(req: Request) {
         try {
             await dbAdmin.runTransaction(async (t) => {
                 const statsSnap = await t.get(statsRef);
-                const statsData = statsSnap.exists ? statsSnap.data() : {} as any;
-                const intervalMinutes = (statsData.update_interval_minutes as number) || 40;
-                const lastPosted = statsData.last_news_posted_at ? statsData.last_news_posted_at.toDate().getTime() : 0;
+                const statsData = statsSnap.exists ? (statsSnap.data() as Record<string, unknown>) : {};
+                const intervalMinutes = typeof statsData.update_interval_minutes === 'number' ? statsData.update_interval_minutes : 40;
+                const lastPostedRaw = statsData.last_news_posted_at as { toDate?: () => Date } | undefined;
+                const lastPosted = lastPostedRaw?.toDate ? lastPostedRaw.toDate().getTime() : 0;
 
                 if (Date.now() - lastPosted < intervalMinutes * 60 * 1000) {
                     throw new Error('cooldown_active');
@@ -118,11 +149,12 @@ export async function POST(req: Request) {
                 // Increment Category Count inside transaction if we have a category
                 if (catData && catData.id) {
                     const { CategoryService } = await import('@/lib/categories');
-                    await CategoryService.incrementCategoryCount(catData.id, t as any);
+                    await CategoryService.incrementCategoryCount(catData.id, t);
                 }
             });
-        } catch (txErr: any) {
-            if (txErr.message === 'cooldown_active') {
+        } catch (txErr: unknown) {
+            const message = txErr instanceof Error ? txErr.message : "Unknown error";
+            if (message === 'cooldown_active') {
                 return NextResponse.json({ error: 'Cooldown active. Try later.' }, { status: 429 });
             }
             console.error('Transaction failed creating news:', txErr);
@@ -143,7 +175,7 @@ export async function POST(req: Request) {
             } else {
                 console.warn("⚠️ FCM Notification failed (returned null).");
             }
-        } catch (notifyErr) {
+        } catch (notifyErr: unknown) {
             console.error("❌ Unexpected error sending notification:", notifyErr);
             notificationSent = false;
         }
@@ -158,8 +190,9 @@ export async function POST(req: Request) {
                 : "Published but Notification Failed"
         });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error("Create News API Error:", error);
-        return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
+        return NextResponse.json({ error: message || "Internal Server Error" }, { status: 500 });
     }
 }

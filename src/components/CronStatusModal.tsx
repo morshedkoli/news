@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 interface CronStatusModalProps {
     isOpen: boolean;
     onClose: () => void;
-    data: any;
+    data: unknown;
     isLoading: boolean;
     error: string | null;
 }

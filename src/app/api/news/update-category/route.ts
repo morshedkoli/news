@@ -75,10 +75,11 @@ export async function POST(req: NextRequest) {
             message: "Category updated successfully"
         });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error("Category update failed:", error);
         return NextResponse.json(
-            { error: error.message || "Update failed" },
+            { error: message || "Update failed" },
             { status: 500 }
         );
     }

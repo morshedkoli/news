@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { db } from "@/lib/firebase";
-import { collection, query, where, getDocs, limit, orderBy } from "firebase/firestore";
-import { PlayCircle, CheckCircle, Filter, FileText, XCircle, BrainCircuit, Activity } from "lucide-react";
-import { format } from "date-fns";
+import { collection, query, getDocs, limit, orderBy } from "firebase/firestore";
+import { PlayCircle, CheckCircle, Filter, XCircle, BrainCircuit, Activity } from "lucide-react";
+import type { ReactNode } from "react";
 
 export default function PipelineTab() {
     const [stats, setStats] = useState({
@@ -168,7 +168,16 @@ export default function PipelineTab() {
     );
 }
 
-function PipelineNode({ icon, label, count, color, isDrop, isSuccess }: any) {
+type PipelineNodeProps = {
+    icon: ReactNode;
+    label: string;
+    count: number;
+    color: string;
+    isDrop?: boolean;
+    isSuccess?: boolean;
+};
+
+function PipelineNode({ icon, label, count, color, isDrop, isSuccess }: PipelineNodeProps) {
     return (
         <div className={`
             relative z-10 w-48 p-4 rounded-xl border-2 flex flex-col items-center gap-2 text-center shadow-sm transition-all

@@ -58,15 +58,16 @@ export async function POST(req: NextRequest) {
             message: `Feed valid! Found ${feed.items?.length || 0} items.`
         });
 
-    } catch (error: any) {
-        console.error("RSS test failed:", error.message);
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        console.error("RSS test failed:", message);
 
         let errorMessage = 'Failed to fetch or parse feed';
-        if (error.message?.includes('timeout')) {
+        if (message.includes('timeout')) {
             errorMessage = 'Feed request timed out (10s limit)';
-        } else if (error.message?.includes('fetch')) {
+        } else if (message.includes('fetch')) {
             errorMessage = 'Could not fetch feed URL. Check if the URL is accessible.';
-        } else if (error.message?.includes('parse') || error.message?.includes('xml')) {
+        } else if (message.includes('parse') || message.includes('xml')) {
             errorMessage = 'Invalid RSS/XML format. Ensure URL points to a valid RSS feed.';
         }
 
@@ -74,7 +75,7 @@ export async function POST(req: NextRequest) {
             {
                 success: false,
                 error: errorMessage,
-                details: error.message
+                details: message
             },
             { status: 400 }
         );

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { db } from "@/lib/firebase";
 import { doc, onSnapshot } from "firebase/firestore";
 import { RssSettings } from "@/types/rss";
@@ -9,16 +10,20 @@ import RunLogsTab from "@/components/Rss/RunLogsTab";
 import FeedHealthTab from "@/components/Rss/FeedHealthTab";
 import DebugTab from "@/components/Rss/DebugTab";
 import PipelineTab from "@/components/Rss/PipelineTab";
-import AiStatusTab from "@/components/Rss/AiStatusTab";
-import { Activity, List, Radio, Terminal, BarChart2, GitMerge, BrainCircuit, Play } from "lucide-react";
+import { Activity, List, Radio, Terminal, BarChart2, GitMerge, Play } from "lucide-react";
 
 export default function RssDashboardPage() {
-    const [activeTab, setActiveTab] = useState<'overview' | 'pipeline' | 'logs' | 'ai' | 'feeds' | 'debug'>('overview');
+    const pathname = usePathname();
+    const router = useRouter();
+    const [activeTab, setActiveTab] = useState<'overview' | 'pipeline' | 'logs' | 'feeds' | 'debug'>('overview');
     const [settings, setSettings] = useState<RssSettings | null>(null);
     const [loadingSettings, setLoadingSettings] = useState(true);
     const [runningManually, setRunningManually] = useState(false);
 
     useEffect(() => {
+        if (pathname === '/rss/dashboard') {
+            router.replace('/rss-management');
+        }
         const unsub = onSnapshot(doc(db, "system_stats", "rss_settings"), (docSnap) => {
             if (docSnap.exists()) {
                 setSettings(docSnap.data() as RssSettings);
@@ -26,7 +31,7 @@ export default function RssDashboardPage() {
             setLoadingSettings(false);
         });
         return () => unsub();
-    }, []);
+    }, [pathname, router]);
 
     const handleManualRun = async () => {
         if (!confirm("Start a manual cron run immediately? This will bypass cooldowns.")) return;
@@ -34,7 +39,7 @@ export default function RssDashboardPage() {
         try {
             await fetch('/api/cron/rss?force=true');
             alert("Manual run triggered. Check logs in ~30 seconds.");
-        } catch (e) {
+        } catch {
             alert("Failed to trigger run.");
         } finally {
             setRunningManually(false);
@@ -45,7 +50,6 @@ export default function RssDashboardPage() {
         { id: 'overview', label: 'Overview', icon: BarChart2 },
         { id: 'pipeline', label: 'Pipeline', icon: GitMerge },
         { id: 'logs', label: 'Run Logs', icon: List },
-        { id: 'ai', label: 'AI Status', icon: BrainCircuit },
         { id: 'feeds', label: 'Feed Health', icon: Radio },
         { id: 'debug', label: 'Debug & Tools', icon: Terminal },
     ];
@@ -78,7 +82,7 @@ export default function RssDashboardPage() {
                 {tabs.map(tab => (
                     <button
                         key={tab.id}
-                        onClick={() => setActiveTab(tab.id as any)}
+                        onClick={() => setActiveTab(tab.id as typeof activeTab)}
                         className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === tab.id
                             ? 'border-emerald-500 text-emerald-600'
                             : 'border-transparent text-gray-500 hover:text-gray-700'
@@ -97,7 +101,6 @@ export default function RssDashboardPage() {
                 )}
                 {activeTab === 'pipeline' && <PipelineTab />}
                 {activeTab === 'logs' && <RunLogsTab />}
-                {activeTab === 'ai' && <AiStatusTab />}
                 {activeTab === 'feeds' && <FeedHealthTab />}
                 {activeTab === 'debug' && <DebugTab />}
             </div>

@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { db } from "@/lib/firebase";
 import { collection, query, orderBy, limit, getDocs } from "firebase/firestore";
 import { RssRunLog } from "@/types/rss";
-import { formatDistanceToNow, format } from "date-fns";
-import { Check, X, ChevronDown, ChevronRight, AlertTriangle, Cloud, Zap, Clock, Ban, Timer } from "lucide-react";
+import { format } from "date-fns";
+import { Check, X, ChevronDown, ChevronRight, AlertTriangle, Clock, Ban, Timer } from "lucide-react";
 
 export default function RunLogsTab() {
     const [logs, setLogs] = useState<RssRunLog[]>([]);
@@ -21,7 +21,7 @@ export default function RunLogsTab() {
         try {
             const q = query(collection(db, "rss_run_logs"), orderBy("started_at", "desc"), limit(50));
             const snapshot = await getDocs(q);
-            const data = snapshot.docs.map(doc => ({ run_id: doc.id, ...doc.data() } as any)) as RssRunLog[];
+            const data = snapshot.docs.map(doc => ({ run_id: doc.id, ...doc.data() } as RssRunLog));
             setLogs(data);
         } catch (error) {
             console.error("Error loading RSS run logs:", error);

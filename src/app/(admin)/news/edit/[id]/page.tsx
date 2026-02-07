@@ -6,16 +6,15 @@ import { db } from "@/lib/firebase";
 import { doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { ArrowLeft, Loader2, Save } from "lucide-react";
 import Link from "next/link";
-import { useAuth } from "@/context/AuthContext";
 import Skeleton from "@/components/Skeleton";
 
 export default function EditNewsPage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = use(params);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
-    const [newsData, setNewsData] = useState<any>(null);
+    type NewsData = { id: string; title: string; summary: string; image?: string };
+    const [newsData, setNewsData] = useState<NewsData | null>(null);
     const router = useRouter();
-    const { user } = useAuth();
 
     useEffect(() => {
         async function fetchNews() {
@@ -23,7 +22,7 @@ export default function EditNewsPage({ params }: { params: Promise<{ id: string 
                 const docRef = doc(db, "news", id);
                 const docSnap = await getDoc(docRef);
                 if (docSnap.exists()) {
-                    setNewsData({ id: docSnap.id, ...docSnap.data() });
+                    setNewsData({ id: docSnap.id, ...(docSnap.data() as Omit<NewsData, 'id'>) });
                 } else {
                     router.push("/news");
                 }
@@ -37,6 +36,7 @@ export default function EditNewsPage({ params }: { params: Promise<{ id: string 
     }, [id, router]);
 
     const handleUpdate = async () => {
+        if (!newsData) return;
         setSaving(true);
         try {
             const docRef = doc(db, "news", id);
@@ -76,6 +76,8 @@ export default function EditNewsPage({ params }: { params: Promise<{ id: string 
         );
     }
 
+    if (!newsData) return null;
+
     return (
         <div className="min-h-screen bg-gray-50 p-4 sm:p-8">
             <div className="mx-auto max-w-3xl">
@@ -92,7 +94,7 @@ export default function EditNewsPage({ params }: { params: Promise<{ id: string 
                             <input
                                 type="text"
                                 value={newsData.title}
-                                onChange={(e) => setNewsData({ ...newsData, title: e.target.value })}
+                                onChange={(e) => setNewsData((prev) => (prev ? { ...prev, title: e.target.value } : prev))}
                                 className="block w-full rounded-md border border-gray-300 bg-white text-gray-900 px-4 py-2 font-semibold focus:border-blue-500 focus:outline-none"
                             />
                         </div>
@@ -102,7 +104,7 @@ export default function EditNewsPage({ params }: { params: Promise<{ id: string 
                             <textarea
                                 rows={10}
                                 value={newsData.summary}
-                                onChange={(e) => setNewsData({ ...newsData, summary: e.target.value })}
+                                onChange={(e) => setNewsData((prev) => (prev ? { ...prev, summary: e.target.value } : prev))}
                                 className="block w-full rounded-md border border-gray-300 bg-white text-gray-900 px-4 py-2 focus:border-blue-500 focus:outline-none"
                             />
                         </div>
@@ -112,7 +114,7 @@ export default function EditNewsPage({ params }: { params: Promise<{ id: string 
                             <input
                                 type="text"
                                 value={newsData.image}
-                                onChange={(e) => setNewsData({ ...newsData, image: e.target.value })}
+                                onChange={(e) => setNewsData((prev) => (prev ? { ...prev, image: e.target.value } : prev))}
                                 className="block w-full rounded-md border border-gray-300 bg-white text-gray-900 px-4 py-2 text-sm focus:border-blue-500 focus:outline-none"
                             />
                             {newsData.image && (

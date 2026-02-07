@@ -25,8 +25,9 @@ function LoginForm() {
         try {
             await signInWithEmailAndPassword(auth, email, password);
             router.push("/"); // Redirect to dashboard on successful login
-        } catch (err: any) {
-            setError(err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : "Unknown error";
+            setError(message);
             setLoading(false);
         }
     };

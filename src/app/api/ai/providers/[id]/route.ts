@@ -28,9 +28,10 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
         await dbAdmin.collection('ai_providers').doc(id).update(body);
 
         return NextResponse.json({ success: true });
-    } catch (error: any) {
-        const status = error.message === 'Unauthorized' ? 401 : error.message === 'Forbidden' ? 403 : 500;
-        return NextResponse.json({ error: error.message || 'Failed to update provider' }, { status: status });
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        const status = message === 'Unauthorized' ? 401 : message === 'Forbidden' ? 403 : 500;
+        return NextResponse.json({ error: message || 'Failed to update provider' }, { status: status });
     }
 }
 
@@ -42,7 +43,7 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
         await dbAdmin.collection('ai_providers').doc(id).delete();
 
         return NextResponse.json({ success: true });
-    } catch (error) {
+    } catch {
         return NextResponse.json({ error: 'Failed to delete provider' }, { status: 500 });
     }
 }

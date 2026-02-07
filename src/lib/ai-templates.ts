@@ -56,7 +56,7 @@ export const BYTEZ_TEMPLATE: Omit<AiProvider, 'id' | 'apiKey' | 'enabled'> = {
     name: "Bytez API",
     type: "openai-compatible",
     provider_category: "paid",
-    endpoint: "https://api.bytez.com/v1/chat/completions",
+    endpoint: "https://api.bytez.com/models/v2/openai/v1/chat/completions",
     model: "openai-community/gpt-2", // Example model
     method: "POST",
     headers: {

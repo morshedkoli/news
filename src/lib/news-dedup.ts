@@ -38,7 +38,7 @@ export function normalizeUrl(url: string): string {
         }
 
         return u.origin + path; // Ignore hash fragments
-    } catch (e) {
+    } catch {
         return url; // Fallback if invalid
     }
 }
@@ -104,8 +104,7 @@ export function generateUrlHash(url: string): string {
 export async function checkDuplicate(
     url: string,
     rawContent: string,
-    generatedSummary: string = '',
-    title: string = ''
+    generatedSummary: string = ''
 ): Promise<DuplicateResult> {
     const normUrl = normalizeUrl(url);
     const normUrlHash = generateUrlHash(normUrl);
@@ -173,8 +172,8 @@ export async function checkDuplicate(
 
         // Title Similarity
         if (data.title) {
-            const sim = calculateTitleSimilarity(data.title, rawContent.split('\n')[0]); // Use first line as title proxy if missing? Or pass title?
-            // Orchestrator passes rawContent, mostly body? 
+            calculateTitleSimilarity(data.title, rawContent.split('\n')[0]); // Use first line as title proxy if missing? Or pass title?
+            // Orchestrator passes rawContent, mostly body?
             // We need Title passed to checkDuplicate.
             // Refactor: checkDuplicate(url, content, summary, title)
         }

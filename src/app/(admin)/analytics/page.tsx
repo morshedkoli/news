@@ -1,30 +1,11 @@
 "use client";
 
 import { useEffect, useState } from 'react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { Activity, CheckCircle, Clock, Server, TrendingUp, RefreshCw, Zap } from 'lucide-react';
+import type { ReactNode } from 'react';
+import AnalyticsCharts from '@/components/Analytics/AnalyticsCharts';
+import Link from "next/link";
+import { Activity, CheckCircle, Clock, TrendingUp, RefreshCw, Zap } from 'lucide-react';
 import { DashboardData } from '@/types/analytics';
-import { cn } from '@/lib/utils';
-
-// Helper: Status Badge
-const StatusBadge = ({ status }: { status: 'healthy' | 'warning' | 'error' | 'degraded' | 'stalled' }) => {
-    const colors = {
-        healthy: "bg-green-100 text-green-700 border-green-200",
-        warning: "bg-amber-100 text-amber-700 border-amber-200",
-        error: "bg-red-100 text-red-700 border-red-200",
-        degraded: "bg-orange-100 text-orange-700 border-orange-200",
-        stalled: "bg-red-50 text-red-600 border-red-100"
-    };
-
-    return (
-        <span className={cn(
-            "px-2 py-0.5 rounded-full text-xs font-medium border",
-            colors[status] || colors.healthy
-        )}>
-            {status.toUpperCase()}
-        </span>
-    );
-};
 
 export default function AnalyticsPage() {
     const [data, setData] = useState<DashboardData | null>(null);
@@ -64,7 +45,7 @@ export default function AnalyticsPage() {
                 </div>
                 <div className="flex items-center gap-4">
                     <span className="text-xs text-gray-400">
-                        Updated: {lastUpdated?.toLocaleTimeString()}
+                        Updated: {lastUpdated ? lastUpdated.toLocaleTimeString() : '—'}
                     </span>
                     <button
                         onClick={() => fetchData()}
@@ -103,122 +84,62 @@ export default function AnalyticsPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
                 <KPICard
                     title="Posts Today"
-                    value={`${data?.summary.postsToday} / ${data?.summary.target}`}
-                    subvalue="Daily Target"
+                    value={data?.summary ? `${data.summary.postsToday} / ${data.summary.target}` : "—"}
+                    subvalue={data?.summary ? "Daily Target" : "No data"}
                     icon={<Activity size={18} />}
-                    trend={data?.summary.postsToday && data.summary.postsToday >= 15 ? "positive" : "neutral"}
+                    trend={data?.summary?.postsToday && data.summary.postsToday >= 15 ? "positive" : "neutral"}
                 />
                 <KPICard
                     title="Success Rate"
-                    value={`${data?.summary.successRate}%`}
-                    subvalue="Cron Availability"
+                    value={data?.summary ? `${data.summary.successRate}%` : "—"}
+                    subvalue={data?.summary ? "Cron Availability" : "No data"}
                     icon={<CheckCircle size={18} />}
-                    trend={data?.summary.successRate! > 90 ? "positive" : "negative"}
-                />
-                <KPICard
-                    title="System Status"
-                    value={data?.summary.systemStatus.toUpperCase() || "UNKNOWN"}
-                    subvalue="Global Health"
-                    icon={<Server size={18} />}
-                    statusColor={data?.summary.systemStatus}
+                    trend={data?.summary?.successRate && data.summary.successRate > 90 ? "positive" : "negative"}
                 />
                 <KPICard
                     title="Active Feeds"
-                    value={data?.summary.activeFeeds || 0}
-                    subvalue="Sources Enabled"
+                    value={data?.summary ? data.summary.activeFeeds : "—"}
+                    subvalue={data?.summary ? "Sources Enabled" : "No data"}
                     icon={<TrendingUp size={18} />}
                 />
                 <KPICard
                     title="Avg Posts/Day"
-                    value={data?.posting.avgPostsPerDay || 0}
-                    subvalue="Last 7 Days"
+                    value={data?.posting ? data.posting.avgPostsPerDay : "—"}
+                    subvalue={data?.posting ? "Last 7 Days" : "No data"}
                     icon={<Clock size={18} />}
                 />
             </div>
 
             {/* Charts Section */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Hourly Trend */}
-                <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
-                    <h3 className="font-semibold text-gray-900 mb-6">Posting Activity (Hourly)</h3>
-                    <div className="h-[300px] w-full">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={data?.posting.hourly}>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
-                                <XAxis
-                                    dataKey="hour"
-                                    tick={{ fontSize: 12, fill: '#6B7280' }}
-                                    axisLine={false}
-                                    tickLine={false}
-                                    interval={2}
-                                />
-                                <YAxis
-                                    tick={{ fontSize: 12, fill: '#6B7280' }}
-                                    axisLine={false}
-                                    tickLine={false}
-                                />
-                                <Tooltip
-                                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                                    cursor={{ fill: '#F3F4F6' }}
-                                />
-                                <Bar dataKey="count" fill="#6366F1" radius={[4, 4, 0, 0]} barSize={20} />
-                            </BarChart>
-                        </ResponsiveContainer>
+            {data?.posting ? (
+                <AnalyticsCharts data={data} />
+            ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm text-sm text-gray-500">
+                        No hourly data available yet.
+                    </div>
+                    <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm text-sm text-gray-500">
+                        No source distribution available yet.
                     </div>
                 </div>
+            )}
 
-                {/* Source Distribution */}
-                <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
-                    <h3 className="font-semibold text-gray-900 mb-6">Top News Sources (7 Days)</h3>
-                    <div className="h-[300px] w-full">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart layout="vertical" data={data?.posting.sourceCounts.slice(0, 10)}>
-                                <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#E5E7EB" />
-                                <XAxis type="number" hide />
-                                <YAxis
-                                    dataKey="name"
-                                    type="category"
-                                    width={100}
-                                    tick={{ fontSize: 11, fill: '#6B7280' }}
-                                    axisLine={false}
-                                    tickLine={false}
-                                />
-                                <Tooltip
-                                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                                    cursor={{ fill: '#F3F4F6' }}
-                                />
-                                <Bar dataKey="count" fill="#8B5CF6" radius={[0, 4, 4, 0]} barSize={20} />
-                            </BarChart>
-                        </ResponsiveContainer>
+            <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-emerald-50 text-emerald-600">
+                        <Activity size={18} />
+                    </div>
+                    <div>
+                        <h3 className="font-semibold text-gray-900">Feed Health lives in RSS Management</h3>
+                        <p className="text-sm text-gray-500">View feed status, pipeline, and recovery actions.</p>
                     </div>
                 </div>
-
-                {/* Feed Health List */}
-                <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
-                    <h3 className="font-semibold text-gray-900 mb-4">Feed Health Status</h3>
-                    <div className="flex-1 overflow-y-auto pr-2 space-y-3 custom-scrollbar h-[300px]">
-                        {data?.feeds.map((feed) => (
-                            <div key={feed.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-100">
-                                <div>
-                                    <div className="font-medium text-gray-900 text-sm truncate max-w-[150px]" title={feed.name}>
-                                        {feed.name}
-                                    </div>
-                                    <div className="text-xs text-gray-500 mt-0.5">
-                                        Last: {feed.lastPost ? formatTimeAgo(feed.lastPost) : 'Never'}
-                                    </div>
-                                </div>
-                                <div className="text-right">
-                                    <StatusBadge status={feed.status} />
-                                    {feed.failureCount > 0 && (
-                                        <div className="text-xs text-red-500 mt-1 font-medium">
-                                            {feed.failureCount} fails
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
+                <Link
+                    href="/rss-management?tab=health"
+                    className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 transition"
+                >
+                    Go to RSS Management
+                </Link>
             </div>
 
             {/* Cron Logs Table */}
@@ -290,13 +211,23 @@ export default function AnalyticsPage() {
 
 // Subcomponents
 
-const KPICard = ({ title, value, subvalue, icon, trend, statusColor }: any) => {
+type KPICardProps = {
+    title: string;
+    value: string | number;
+    subvalue: string;
+    icon: ReactNode;
+    trend?: 'positive' | 'negative' | 'neutral';
+    statusColor?: 'healthy' | 'degraded' | 'stalled' | 'manual';
+};
+
+const KPICard = ({ title, value, subvalue, icon, trend, statusColor }: KPICardProps) => {
     let colorClass = "text-gray-900";
     if (trend === 'positive') colorClass = "text-green-600";
     if (trend === 'negative') colorClass = "text-red-600";
     if (statusColor === 'healthy') colorClass = "text-green-600";
     if (statusColor === 'degraded') colorClass = "text-orange-600";
     if (statusColor === 'stalled') colorClass = "text-red-600";
+    const isMissing = value === "—" || value === "-" || value === "";
 
     return (
         <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm flex flex-col justify-between h-full">
@@ -308,7 +239,14 @@ const KPICard = ({ title, value, subvalue, icon, trend, statusColor }: any) => {
             </div>
             <div>
                 <div className={`text-2xl font-bold ${colorClass}`}>{value}</div>
-                <div className="text-xs text-gray-400 mt-1">{subvalue}</div>
+                <div className="text-xs text-gray-400 mt-1">
+                    {subvalue}
+                    {isMissing && (
+                        <span className="ml-2 text-[10px] text-gray-400" title="Data not available yet. This can happen when the system is still collecting metrics.">
+                            (why?)
+                        </span>
+                    )}
+                </div>
             </div>
         </div>
     );
@@ -329,15 +267,3 @@ const AnalyticsSkeleton = () => (
     </div>
 );
 
-function formatTimeAgo(dateString: string) {
-    const date = new Date(dateString);
-    const now = new Date();
-    const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
-
-    if (seconds < 60) return `${seconds}s ago`;
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes}m ago`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours}h ago`;
-    return `${Math.floor(hours / 24)}d ago`;
-}

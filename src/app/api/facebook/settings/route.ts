@@ -43,10 +43,11 @@ export async function GET(req: NextRequest) {
             configured: !!(data?.app_id && data?.app_secret)
         });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error('Error fetching Facebook settings:', error);
         return NextResponse.json(
-            { error: error.message || 'Failed to fetch settings' },
+            { error: message || 'Failed to fetch settings' },
             { status: 500 }
         );
     }
@@ -97,10 +98,11 @@ export async function POST(req: NextRequest) {
             message: 'Facebook credentials saved successfully'
         });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error('Error saving Facebook settings:', error);
         return NextResponse.json(
-            { error: error.message || 'Failed to save settings' },
+            { error: message || 'Failed to save settings' },
             { status: 500 }
         );
     }

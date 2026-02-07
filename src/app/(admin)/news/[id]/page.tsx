@@ -16,12 +16,23 @@ interface NewsDetails {
     image?: string;
     source_name?: string;
     source_url?: string;
-    published_at?: any;
-    created_at?: any;
+    published_at?: unknown;
+    created_at?: unknown;
     category?: string;
     likes?: number;
     importance_score?: number;
 }
+
+type FirestoreTimestamp = { toDate: () => Date };
+
+const getDateValue = (value: unknown): Date | null => {
+    if (!value) return null;
+    if (value instanceof Date) return value;
+    if (typeof value === 'string' || typeof value === 'number') return new Date(value);
+    const maybe = value as FirestoreTimestamp;
+    if (typeof maybe.toDate === 'function') return maybe.toDate();
+    return null;
+};
 
 export default function ViewNewsPage() {
     const params = useParams(); // params.id is string | string[]
@@ -152,12 +163,10 @@ export default function ViewNewsPage() {
                             <Calendar size={16} className="text-slate-400" />
                             <span>
                                 {news.published_at
-                                    ? format(
-                                        (typeof news.published_at.toDate === 'function')
-                                            ? news.published_at.toDate()
-                                            : new Date(news.published_at),
-                                        "PPP p"
-                                    )
+                                    ? (() => {
+                                        const published = getDateValue(news.published_at);
+                                        return published ? format(published, "PPP p") : 'Not Published';
+                                    })()
                                     : 'Not Published'}
                             </span>
                         </div>

@@ -31,12 +31,26 @@ export async function parseRssFeed(feedUrl: string): Promise<RssItem[]> {
             items = [items];
         }
 
-        return items.map((item: any) => ({
-            title: item.title,
-            link: normalizeUrl(item.link || item.id || ""), // Atom feeds use id often as link
-            pubDate: item.pubDate || item.published || item.updated || new Date().toISOString(),
-            description: item.description || item.summary || ""
-        })).filter((i: RssItem) => i.link && i.title);
+        const rawItems = items as unknown[];
+        return rawItems.map((item) => {
+            const raw = item as {
+                title?: string;
+                link?: string;
+                id?: string;
+                pubDate?: string;
+                published?: string;
+                updated?: string;
+                description?: string;
+                summary?: string;
+            };
+
+            return {
+                title: raw.title || "",
+                link: normalizeUrl(raw.link || raw.id || ""), // Atom feeds use id often as link
+                pubDate: raw.pubDate || raw.published || raw.updated || new Date().toISOString(),
+                description: raw.description || raw.summary || ""
+            };
+        }).filter((i: RssItem) => i.link && i.title);
 
     } catch (error) {
         console.error(`Error parsing RSS feed ${feedUrl}:`, error);
@@ -67,7 +81,7 @@ export function normalizeUrl(url: string): string {
         }
 
         return cleanUrl;
-    } catch (e) {
+    } catch {
         return url; // Return original if parsing fails
     }
 }

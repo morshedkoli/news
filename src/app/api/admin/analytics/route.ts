@@ -7,7 +7,7 @@ export async function GET() {
     try {
         const data = await getAnalyticsData();
         return NextResponse.json(data);
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("Analytics Error:", error);
         return NextResponse.json(
             { error: "Failed to fetch analytics" },

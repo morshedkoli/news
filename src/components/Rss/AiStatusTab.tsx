@@ -2,16 +2,17 @@
 
 import { useState, useEffect } from "react";
 import {
-    Activity, Power, AlertTriangle, Zap, Clock, ShieldCheck,
-    RefreshCw, ChevronRight, ArrowRight, AlertOctagon, CheckCircle2,
+    Activity, Power, Zap, Clock,
+    RefreshCw, ChevronRight, ArrowRight, AlertOctagon,
     BarChart3, Settings, Info
 } from "lucide-react";
-import { AiProvider, AiModelConfig } from "@/types/ai";
+import { AiProvider } from "@/types/ai";
 
 export default function AiStatusTab() {
     const [providers, setProviders] = useState<AiProvider[]>([]);
     const [loading, setLoading] = useState(true);
     const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
+    const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set());
 
     const fetchProviders = async () => {
         try {
@@ -20,7 +21,7 @@ export default function AiStatusTab() {
                 const data = await res.json();
                 setProviders(data);
             }
-        } catch (error) {
+        } catch {
             console.error("Failed to fetch AI providers");
         } finally {
             setLoading(false);
@@ -30,7 +31,16 @@ export default function AiStatusTab() {
     useEffect(() => {
         fetchProviders();
         const interval = setInterval(fetchProviders, 10000); // Fast poll for admin
-        return () => clearInterval(interval);
+        const handleHealthUpdate = () => fetchProviders();
+        if (typeof window !== 'undefined') {
+            window.addEventListener('ai-health-updated', handleHealthUpdate);
+        }
+        return () => {
+            clearInterval(interval);
+            if (typeof window !== 'undefined') {
+                window.removeEventListener('ai-health-updated', handleHealthUpdate);
+            }
+        };
     }, []);
 
     const toggleProvider = async (id: string, current: boolean) => {
@@ -59,6 +69,54 @@ export default function AiStatusTab() {
 
     // Select Provider View
     const selectedProvider = providers.find(p => p.id === selectedProviderId);
+
+    const formatTime = (value?: string | null) => {
+        if (!value) return '—';
+        const d = new Date(value);
+        if (Number.isNaN(d.getTime())) return '—';
+        return d.toLocaleString();
+    };
+
+    const getLatencyTone = (latency?: number) => {
+        if (!latency && latency !== 0) return 'text-gray-400';
+        if (latency <= 800) return 'text-emerald-600';
+        if (latency <= 2000) return 'text-amber-600';
+        return 'text-red-600';
+    };
+
+    const getStatusChip = (provider: AiProvider) => {
+        if (!provider.enabled) {
+            return <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">Disabled</span>;
+        }
+
+        if (provider.healthStatus === 'healthy') {
+            return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Online</span>;
+        }
+
+        if (provider.healthStatus === 'degraded') {
+            return <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">Degraded</span>;
+        }
+
+        if (provider.healthStatus === 'unhealthy') {
+            return <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">Offline</span>;
+        }
+
+        return <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">Not Checked</span>;
+    };
+
+    const getProviderUpdatedAt = (provider: AiProvider) => {
+        const legacy = (provider as { lastUpdated?: string }).lastUpdated;
+        return provider.stats?.lastUpdated || legacy || null;
+    };
+
+    const toggleExpanded = (id: string) => {
+        setExpandedProviders(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
 
     return (
         <div className="space-y-6">
@@ -91,98 +149,114 @@ export default function AiStatusTab() {
 
             {/* MAIN CONTENT SWITCHER */}
             {!selectedProvider ? (
-                // VIEW: OVERVIEW GRID
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {providers.sort((a, b) => (b.healthScore ?? 0) - (a.healthScore ?? 0)).map(provider => (
-                        <div key={provider.id} className={`bg-white border rounded-xl shadow-sm hover:shadow-md transition-all group ${!provider.enabled ? 'opacity-75 bg-gray-50' : ''
-                            }`}>
-                            {/* Card Header */}
-                            <div className="p-5 border-b border-gray-100 flex justify-between items-start">
-                                <div className="flex items-center gap-3">
-                                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${!provider.enabled ? 'bg-gray-100 text-gray-400' :
-                                            provider.healthStatus === 'unhealthy' ? 'bg-red-100 text-red-600' :
-                                                provider.healthStatus === 'degraded' ? 'bg-yellow-100 text-yellow-600' :
-                                                    'bg-emerald-100 text-emerald-600'
-                                        }`}>
-                                        <Activity size={20} />
-                                    </div>
-                                    <div>
-                                        <h3 className="font-bold text-gray-900 text-lg">{provider.name}</h3>
-                                        <div className="flex items-center gap-2 text-xs font-medium">
-                                            <span className={`px-2 py-0.5 rounded-full ${provider.healthStatus === 'healthy' ? 'bg-emerald-100 text-emerald-700' :
-                                                    provider.healthStatus === 'degraded' ? 'bg-yellow-100 text-yellow-700' :
-                                                        'bg-red-100 text-red-700'
+                // VIEW: COLLAPSIBLE LIST
+                <div className="space-y-4">
+                    {providers.sort((a, b) => (b.healthScore ?? 0) - (a.healthScore ?? 0)).map(provider => {
+                        const isExpanded = expandedProviders.has(provider.id);
+                        const successRate = provider.stats?.successRate ?? 1;
+                        const failureRate = (1 - successRate) * 100;
+                        const latencyMs = provider.stats?.avgLatencyMs;
+                        const healthScore = provider.healthScore ?? 100;
+                        const scoreTone = healthScore >= 80 ? 'bg-emerald-500' : healthScore >= 50 ? 'bg-amber-500' : 'bg-red-500';
+
+                        return (
+                            <div key={provider.id} className={`bg-white border rounded-xl shadow-sm ${!provider.enabled ? 'opacity-80 bg-gray-50' : ''}`}>
+                                <button
+                                    onClick={() => toggleExpanded(provider.id)}
+                                    className="w-full p-5 flex flex-col gap-3 text-left"
+                                >
+                                    <div className="flex items-start justify-between gap-4">
+                                        <div className="flex items-center gap-3">
+                                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${!provider.enabled ? 'bg-gray-100 text-gray-400' :
+                                                    provider.healthStatus === 'unhealthy' ? 'bg-red-100 text-red-600' :
+                                                        provider.healthStatus === 'degraded' ? 'bg-yellow-100 text-yellow-600' :
+                                                            'bg-emerald-100 text-emerald-600'
                                                 }`}>
-                                                Score: {provider.healthScore ?? 100}
+                                                <Activity size={20} />
+                                            </div>
+                                            <div>
+                                                <div className="flex items-center gap-2">
+                                                    <h3 className="font-bold text-gray-900 text-lg">{provider.name}</h3>
+                                                    {getStatusChip(provider)}
+                                                </div>
+                                                <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                                                    <span>Updated: {formatTime(getProviderUpdatedAt(provider))}</span>
+                                                    {provider.provider_category && (
+                                                        <span className="uppercase">{provider.provider_category}</span>
+                                                    )}
+                                                    {provider.healthStatus === 'degraded' && (
+                                                        <span className="text-amber-600 font-medium">Degraded</span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-2 text-sm">
+                                            <span className={`font-mono ${getLatencyTone(latencyMs)}`}>
+                                                {latencyMs ? `${(latencyMs / 1000).toFixed(2)}s` : '—'}
                                             </span>
-                                            {provider.provider_category && (
-                                                <span className="text-gray-400 uppercase">{provider.provider_category}</span>
-                                            )}
+                                            <ChevronRight size={18} className={`text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
                                         </div>
                                     </div>
-                                </div>
-                                <div className="text-right">
-                                    <div className="text-xs text-gray-500 uppercase font-bold">Latency</div>
-                                    <div className="font-mono text-lg font-medium">
-                                        {(provider.stats?.avgLatencyMs ?? 0) > 0
-                                            ? `${(provider.stats!.avgLatencyMs / 1000).toFixed(2)}s`
-                                            : '-'}
-                                    </div>
-                                </div>
-                            </div>
 
-                            {/* Card Body */}
-                            <div className="p-5 space-y-4">
-                                <div className="grid grid-cols-2 gap-4 text-sm">
-                                    <div className="bg-gray-50 p-2 rounded">
-                                        <span className="text-gray-500 text-xs block">Failure Rate</span>
-                                        <span className={`font-bold ${(1 - (provider.stats?.successRate ?? 1)) > 0.1 ? 'text-red-600' : 'text-gray-700'
-                                            }`}>
-                                            {((1 - (provider.stats?.successRate ?? 1)) * 100).toFixed(0)}%
-                                        </span>
+                                    <div className="flex items-center gap-2 text-xs text-slate-600">
+                                        <span className="font-medium">Health Score</span>
+                                        <div className="h-2 flex-1 rounded-full bg-slate-100 overflow-hidden">
+                                            <div className={`h-full ${scoreTone}`} style={{ width: `${healthScore}%` }} />
+                                        </div>
+                                        <span className="font-mono">{healthScore}/100</span>
                                     </div>
-                                    <div className="bg-gray-50 p-2 rounded">
-                                        <span className="text-gray-500 text-xs block">Requests</span>
-                                        <span className="font-bold text-gray-700">{provider.stats?.totalRequests ?? 0}</span>
-                                    </div>
-                                </div>
+                                </button>
 
-                                {provider.pausedUntil && new Date(provider.pausedUntil).getTime() > Date.now() && (
-                                    <div className="flex items-center gap-2 text-xs font-bold text-red-600 bg-red-50 p-2 rounded border border-red-100 animate-pulse">
-                                        <Clock size={12} />
-                                        PAUSED until {new Date(provider.pausedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                {isExpanded && (
+                                    <div className="px-5 pb-5 space-y-4">
+                                        <div className="grid grid-cols-2 gap-4 text-sm">
+                                            <div className="bg-gray-50 p-3 rounded">
+                                                <span className="text-gray-500 text-xs block">Failure Rate</span>
+                                                <span className={`font-bold ${failureRate > 10 ? 'text-red-600' : 'text-gray-700'}`}>
+                                                    {failureRate.toFixed(0)}%
+                                                </span>
+                                            </div>
+                                            <div className="bg-gray-50 p-3 rounded">
+                                                <span className="text-gray-500 text-xs block">Requests</span>
+                                                <span className="font-bold text-gray-700">{provider.stats?.totalRequests ?? 0}</span>
+                                            </div>
+                                        </div>
+
+                                        {provider.healthReason && (
+                                            <div className="text-xs text-red-600">Error: {provider.healthReason}</div>
+                                        )}
+
+                                        {provider.pausedUntil && new Date(provider.pausedUntil).getTime() > Date.now() && (
+                                            <div className="flex items-center gap-2 text-xs font-bold text-red-600 bg-red-50 p-2 rounded border border-red-100 animate-pulse">
+                                                <Clock size={12} />
+                                                PAUSED until {new Date(provider.pausedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                            </div>
+                                        )}
+
+                                        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+                                            <button
+                                                onClick={() => setSelectedProviderId(provider.id)}
+                                                className="text-sm font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                                            >
+                                                View Models <ChevronRight size={16} />
+                                            </button>
+                                            {provider.healthStatus !== 'healthy' && (
+                                                <button onClick={() => recoverProvider(provider.id)} title="Retry Connection" className="inline-flex items-center gap-1 text-slate-500 hover:text-blue-600">
+                                                    <RefreshCw size={12} /> Retry
+                                                </button>
+                                            )}
+                                            <button
+                                                onClick={() => toggleProvider(provider.id, provider.enabled ?? true)}
+                                                className={`inline-flex items-center gap-1 ${provider.enabled ? 'text-slate-500 hover:text-red-600' : 'text-emerald-600'}`}
+                                            >
+                                                <Power size={12} /> {provider.enabled ? 'Disable' : 'Enable'}
+                                            </button>
+                                        </div>
                                     </div>
                                 )}
                             </div>
-
-                            {/* Card Footer */}
-                            <div className="p-4 bg-gray-50 rounded-b-xl border-t border-gray-100 flex items-center justify-between">
-                                <button
-                                    onClick={() => setSelectedProviderId(provider.id)}
-                                    className="text-sm font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 group-hover:translate-x-1 transition-transform"
-                                >
-                                    View Models <ChevronRight size={16} />
-                                </button>
-
-                                <div className="flex items-center gap-2">
-                                    {provider.healthStatus !== 'healthy' && (
-                                        <button onClick={() => recoverProvider(provider.id)} title="Retry Connection" className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded">
-                                            <RefreshCw size={14} />
-                                        </button>
-                                    )}
-                                    <button
-                                        onClick={() => toggleProvider(provider.id, provider.enabled ?? true)}
-                                        className={`p-2 rounded transition-colors ${provider.enabled
-                                                ? 'text-gray-400 hover:text-red-600 hover:bg-red-50'
-                                                : 'text-red-500 bg-red-50 hover:bg-red-100'
-                                            }`}
-                                    >
-                                        <Power size={14} />
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             ) : (
                 // VIEW: DETAIL DRILL-DOWN

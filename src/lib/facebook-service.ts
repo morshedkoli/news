@@ -13,6 +13,25 @@ const FACEBOOK_GRAPH_API = 'https://graph.facebook.com/v18.0';
 const FACEBOOK_OAUTH_URL = 'https://www.facebook.com/v18.0/dialog/oauth';
 
 export class FacebookService {
+    private static async getAppInfo(): Promise<{ appName: string; playStoreUrl?: string }> {
+        const appName = process.env.APP_NAME || 'NewsByte';
+
+        try {
+            const appDoc = await dbAdmin.collection('app_config').doc('version').get();
+            if (appDoc.exists) {
+                const data = appDoc.data();
+                const playStoreUrl = typeof data?.play_store_url === 'string' ? data.play_store_url.trim() : '';
+                return {
+                    appName,
+                    playStoreUrl: playStoreUrl || undefined
+                };
+            }
+        } catch (error) {
+            console.error('Error loading app config for Facebook posts:', error);
+        }
+
+        return { appName };
+    }
     /**
      * Load Facebook credentials from Firestore or fallback to env vars
      */
@@ -149,7 +168,7 @@ export class FacebookService {
             access_token: page.access_token,
             token_expires_at: Timestamp.fromDate(expiresAt),
             enabled: true,
-            added_at: FieldValue.serverTimestamp() as any,
+            added_at: FieldValue.serverTimestamp() as unknown as Timestamp,
             added_by: userId,
             total_posts: 0
         };
@@ -270,6 +289,13 @@ export class FacebookService {
         const pages = await this.getEnabledPages();
         const success: Record<string, string> = {};
         const errors: Record<string, string> = {};
+        const appInfo = await this.getAppInfo();
+        const headline = appInfo.appName ? `${title} | ${appInfo.appName}` : title;
+        const downloadLine = appInfo.playStoreUrl
+            ? `Download ${appInfo.appName} on Play Store: ${appInfo.playStoreUrl}`
+            : `Download ${appInfo.appName} on Play Store`;
+        const messageParts = [headline, summary, downloadLine].filter(Boolean);
+        const message = messageParts.join('\n\n');
 
         // Post to each page
         for (const page of pages) {
@@ -285,7 +311,7 @@ export class FacebookService {
                 }
 
                 const postData: FacebookPostData = {
-                    message: `${title}\n\n${summary}`,
+                    message,
                     link: sourceUrl,
                     picture: imageUrl
                 };
@@ -293,20 +319,21 @@ export class FacebookService {
                 const postId = await this.postToPage(page, postData);
                 success[page.page_id] = postId;
 
-            } catch (error: any) {
+            } catch (error: unknown) {
+                const message = error instanceof Error ? error.message : "Unknown error";
                 console.error(`Failed to post to Facebook page ${page.page_name}:`, error);
-                errors[page.page_id] = error.message;
+                errors[page.page_id] = message;
 
                 // Update page with error
                 await dbAdmin.collection('facebook_pages').doc(page.id).update({
-                    last_error: error.message
+                    last_error: message
                 });
             }
         }
 
         // Update news document with Facebook post info
         if (Object.keys(success).length > 0 || Object.keys(errors).length > 0) {
-            const updateData: any = {
+            const updateData: Record<string, unknown> = {
                 facebook_posted_at: FieldValue.serverTimestamp()
             };
 

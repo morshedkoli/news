@@ -44,10 +44,6 @@ async function verify() {
         console.error(`❌ FOUND ${leaks} LEAKING ITEMS!`);
     }
 
-    // 2. Check for items with NO status
-    const noStatusQuery = await db.collection('news').get(); // Scan all? might be large.
-    // Let's sample or check for known failures.
-
     // 3. Verify Blocked Items are isolated
     const blockedQuery = await db.collection('news').where('status', '==', 'blocked').get();
     console.log(`ℹ️  Found ${blockedQuery.size} blocked items correctly marked.`);

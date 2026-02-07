@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { dbAdmin } from "@/lib/firebase-admin";
 import { generateContent } from "@/lib/ai-engine";
 import { NewsArticle } from "@/types/news";
-import { Timestamp } from "firebase-admin/firestore";
 
 export const maxDuration = 20; // Hard limit 20s
 export const revalidate = 0;
@@ -65,7 +64,7 @@ export async function GET(req: NextRequest) {
             const json = JSON.parse(clean);
             summary = json.summary;
             if (json.category) category = json.category;
-        } catch (e) {
+        } catch {
             // Fallback to raw text if JSON fails
             summary = aiRes.content.slice(0, 500);
         }
@@ -85,8 +84,9 @@ export async function GET(req: NextRequest) {
             duration: aiRes.executionTimeMs
         });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error("AI Cron Fatal:", error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return NextResponse.json({ error: message }, { status: 500 });
     }
 }

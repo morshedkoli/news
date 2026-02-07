@@ -41,15 +41,16 @@ function testParsing(input: string) {
         const res = JSON.parse(clean);
         console.log("✅ JSON Parse Success:", res);
         return;
-    } catch (parseErr: any) {
-        console.log("⚠️ Parse 1 Failed:", parseErr.message);
+    } catch (parseErr: unknown) {
+        const message = parseErr instanceof Error ? parseErr.message : "Unknown error";
+        console.log("⚠️ Parse 1 Failed:", message);
 
         try {
             const cleaner = clean.replace(/\n/g, "\\n");
             const res = JSON.parse(cleaner);
             console.log("✅ JSON Parse Fix Success:", res);
             return;
-        } catch (e2) {
+        } catch {
             console.log("⚠️ Parse 2 Failed. Trying Regex...");
 
             const titleMatch = clean.match(/"title"\s*:\s*"([^"]*?)"/);

@@ -15,8 +15,9 @@ export default function DebugTab() {
             const res = await fetch(`/api/cron/rss?${mode}=true`);
             const data = await res.json();
             setOutput(JSON.stringify(data, null, 2));
-        } catch (error: any) {
-            setOutput(`❌ Error: ${error.message}`);
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : "Unknown error";
+            setOutput(`❌ Error: ${message}`);
         } finally {
             setIsLoading(false);
         }

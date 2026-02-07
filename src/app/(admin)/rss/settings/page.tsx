@@ -1,12 +1,16 @@
 "use client";
+"use client";
 
 import { useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { db } from "@/lib/firebase";
 import { doc, onSnapshot, setDoc, serverTimestamp } from "firebase/firestore";
-import { Save, AlertTriangle, ShieldCheck, Clock } from "lucide-react";
+import { Save, AlertTriangle, ShieldCheck } from "lucide-react";
 import Skeleton from "@/components/Skeleton";
 
 export default function GlobalSettingsPage() {
+    const pathname = usePathname();
+    const router = useRouter();
     const [config, setConfig] = useState({
         master_interval_minutes: 5,
         global_safety_delay_minutes: 5,
@@ -20,6 +24,9 @@ export default function GlobalSettingsPage() {
     const [message, setMessage] = useState("");
 
     useEffect(() => {
+        if (pathname === '/rss/settings') {
+            router.replace('/rss-management?tab=settings');
+        }
         const unsub = onSnapshot(doc(db, "system_stats", "rss_settings"), (docSnap) => {
             if (docSnap.exists()) {
                 const data = docSnap.data();
@@ -35,7 +42,7 @@ export default function GlobalSettingsPage() {
             setLoading(false);
         });
         return () => unsub();
-    }, []);
+    }, [pathname, router]);
 
     const handleSave = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -213,9 +220,10 @@ export default function GlobalSettingsPage() {
                                 }, { merge: true });
 
                                 setMessage("✅ System successfully reset to IDLE.");
-                            } catch (e: any) {
+                            } catch (e: unknown) {
+                                const message = e instanceof Error ? e.message : "Unknown error";
                                 console.error(e);
-                                setMessage("❌ Reset failed: " + e.message);
+                                setMessage("❌ Reset failed: " + message);
                             } finally {
                                 setSaving(false);
                             }
@@ -240,8 +248,9 @@ export default function GlobalSettingsPage() {
                                 } else {
                                     setMessage(`❌ Failed: ${data.error}`);
                                 }
-                            } catch (e: any) {
-                                setMessage("❌ Error: " + e.message);
+                            } catch (e: unknown) {
+                                const message = e instanceof Error ? e.message : "Unknown error";
+                                setMessage("❌ Error: " + message);
                             } finally {
                                 setSaving(false);
                             }

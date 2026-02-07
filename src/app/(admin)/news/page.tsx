@@ -8,48 +8,20 @@ import {
     orderBy,
     limit,
     onSnapshot,
-    deleteDoc,
-    doc,
-    updateDoc,
-    serverTimestamp,
-    startAfter,
-    getDocs,
-    where,
 } from "firebase/firestore";
 import { format } from "date-fns";
 import { Edit, Eye, EyeOff, Loader2, Trash2, Search, ChevronLeft, ChevronRight, ThumbsUp, FileText, Tag, CheckSquare, Square, MinusSquare } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import DeleteConfirmationModal from "@/components/DeleteConfirmationModal";
 import Skeleton from "@/components/Skeleton";
 import { toast } from "sonner";
-
-// Available categories for news
-// Available categories for news mapped to slugs
-export const CATEGORIES = [
-    { name: "সাধারণ", slug: "general" },
-    { name: "খেলাধুলা", slug: "sports" },
-    { name: "রাজনীতি", slug: "politics" },
-    { name: "প্রযুক্তি", slug: "technology" },
-    { name: "বিনোদন", slug: "entertainment" },
-    { name: "অর্থনীতি", slug: "economy" },
-    { name: "স্বাস্থ্য", slug: "health" },
-    { name: "বিজ্ঞান", slug: "science" },
-    { name: "শিক্ষা", slug: "education" },
-    { name: "আন্তর্জাতিক", slug: "international" },
-    { name: "জাতীয়", slug: "national" },
-    { name: "জীবনযাত্রা", slug: "lifestyle" },
-    { name: "মতামত", slug: "opinion" },
-    { name: "সম্পাদকীয়", slug: "editorial" },
-    { name: "অপরাধ", slug: "crime" },
-    { name: "পরিবেশ", slug: "environment" },
-    { name: "ধর্ম", slug: "religion" }
-];
+import { CATEGORIES } from "@/lib/news-categories";
 
 interface NewsItem {
     id: string;
     title: string;
-    published_at: any;
+    published_at: unknown;
+    scheduled_at?: unknown;
     image: string;
     source_name: string;
     likes: number;
@@ -58,6 +30,21 @@ interface NewsItem {
     status?: 'published' | 'blocked' | 'draft' | 'processing';
     block_reasons?: string[];
 }
+
+type FirestoreTimestamp = { toDate: () => Date };
+
+const getPublishedDate = (value: unknown): Date | null => {
+    if (!value) return null;
+    if (value instanceof Date) return value;
+    if (typeof value === 'string' || typeof value === 'number') return new Date(value);
+    const maybe = value as FirestoreTimestamp;
+    if (typeof maybe.toDate === 'function') return maybe.toDate();
+    return null;
+};
+
+const isScheduledItem = (item: NewsItem): boolean => {
+    return item.status === 'processing' && !!getPublishedDate(item.scheduled_at);
+};
 
 export default function NewsListPage() {
     const [news, setNews] = useState<NewsItem[]>([]);
@@ -68,7 +55,7 @@ export default function NewsListPage() {
     const [dateRange, setDateRange] = useState<{ start: string; end: string }>({ start: "", end: "" });
     const [editingCategory, setEditingCategory] = useState<string | null>(null);
     const [updatingCategory, setUpdatingCategory] = useState(false);
-    const [activeTab, setActiveTab] = useState<'published' | 'blocked' | 'draft'>('published');
+    const [activeTab, setActiveTab] = useState<'published' | 'scheduled' | 'draft'>('published');
 
     // Delete Modal State
     const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; id: string | null }>({
@@ -237,9 +224,7 @@ export default function NewsListPage() {
         // Date Filter
         let matchesDate = true;
         if (dateRange.start || dateRange.end) {
-            const itemDate = item.published_at
-                ? (typeof item.published_at.toDate === 'function' ? item.published_at.toDate() : new Date(item.published_at))
-                : null;
+            const itemDate = getPublishedDate(item.published_at);
 
             if (itemDate) {
                 if (dateRange.start) {
@@ -261,8 +246,8 @@ export default function NewsListPage() {
     }).filter(item => {
         // Tab Filtering
         if (activeTab === 'published') return item.status === 'published' || (item.published_at && !item.status); // Fallback for old data
-        if (activeTab === 'blocked') return item.status === 'blocked';
-        if (activeTab === 'draft') return item.status === 'draft' || item.status === 'processing' || (!item.published_at && !item.status);
+        if (activeTab === 'scheduled') return isScheduledItem(item);
+        if (activeTab === 'draft') return item.status === 'draft' || (item.status === 'processing' && !isScheduledItem(item)) || (!item.published_at && !item.status);
         return true;
     });
 
@@ -369,10 +354,10 @@ export default function NewsListPage() {
                     Published
                 </button>
                 <button
-                    onClick={() => setActiveTab('blocked')}
-                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'blocked' ? 'border-red-600 text-red-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                    onClick={() => setActiveTab('scheduled')}
+                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'scheduled' ? 'border-amber-600 text-amber-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
                 >
-                    Blocked
+                    Scheduled
                 </button>
                 <button
                     onClick={() => setActiveTab('draft')}
@@ -453,12 +438,10 @@ export default function NewsListPage() {
                                                         </div>
                                                         <div className="text-xs text-slate-500">
                                                             {item.published_at
-                                                                ? format(
-                                                                    (typeof item.published_at.toDate === 'function')
-                                                                        ? item.published_at.toDate()
-                                                                        : new Date(item.published_at),
-                                                                    "MMM d, yyyy • h:mm a"
-                                                                )
+                                                                ? (() => {
+                                                                    const date = getPublishedDate(item.published_at);
+                                                                    return date ? format(date, "MMM d, yyyy • h:mm a") : "Not published yet";
+                                                                })()
                                                                 : "Not published yet"}
                                                         </div>
                                                     </div>
@@ -495,17 +478,36 @@ export default function NewsListPage() {
                                                 </span>
                                             </td>
                                             <td className="px-6 py-4">
-                                                <span
-                                                    className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${item.status === 'published'
-                                                        ? "bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20"
-                                                        : item.status === 'blocked'
-                                                            ? "bg-red-50 text-red-700 ring-1 ring-inset ring-red-600/20"
-                                                            : "bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-600/20"
-                                                        }`}
-                                                >
-                                                    <span className={`h-1.5 w-1.5 rounded-full ${item.status === 'published' ? "bg-emerald-600" : item.status === 'blocked' ? "bg-red-600" : "bg-amber-600"}`}></span>
-                                                    {item.status ? item.status.charAt(0).toUpperCase() + item.status.slice(1) : (isPublished ? "Published" : "Draft")}
-                                                </span>
+                                                {(() => {
+                                                    const scheduledDate = getPublishedDate(item.scheduled_at);
+                                                    const isScheduled = item.status === 'processing' && !!scheduledDate;
+                                                    const statusLabel = isScheduled
+                                                        ? "Scheduled"
+                                                        : item.status
+                                                            ? item.status.charAt(0).toUpperCase() + item.status.slice(1)
+                                                            : (isPublished ? "Published" : "Draft");
+
+                                                    return (
+                                                        <>
+                                                            <span
+                                                                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${item.status === 'published'
+                                                                ? "bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20"
+                                                                : item.status === 'blocked'
+                                                                    ? "bg-red-50 text-red-700 ring-1 ring-inset ring-red-600/20"
+                                                                    : "bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-600/20"
+                                                            }`}
+                                                            >
+                                                                <span className={`h-1.5 w-1.5 rounded-full ${item.status === 'published' ? "bg-emerald-600" : item.status === 'blocked' ? "bg-red-600" : "bg-amber-600"}`}></span>
+                                                                {statusLabel}
+                                                            </span>
+                                                            {isScheduled && scheduledDate && (
+                                                                <div className="mt-1 text-[10px] text-amber-700">
+                                                                    Publishes {scheduledDate.toLocaleString()}
+                                                                </div>
+                                                            )}
+                                                        </>
+                                                    );
+                                                })()}
                                                 {item.status === 'blocked' && item.block_reasons && (
                                                     <div className="mt-1 text-[10px] text-red-600 max-w-[150px] leading-tight">
                                                         {item.block_reasons.join(", ")}

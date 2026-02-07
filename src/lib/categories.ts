@@ -6,7 +6,7 @@ interface CategoryData {
     name: string;
     slug: string;
     postCount: number;
-    lastPostAt: any; // Timestamp
+    lastPostAt: unknown; // Timestamp
     enabled: boolean;
 }
 

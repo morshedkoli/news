@@ -1,7 +1,17 @@
-import { Activity, CheckCircle, Clock, Server, TrendingUp, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { Activity, CheckCircle, Clock, AlertTriangle, ShieldCheck } from 'lucide-react';
 import { DashboardData } from '@/types/analytics';
+import type { ReactNode } from 'react';
 
-const KPICard = ({ title, value, subvalue, icon, trend, statusColor }: any) => {
+type KPICardProps = {
+    title: string;
+    value: string | number;
+    subvalue: string;
+    icon: ReactNode;
+    trend?: 'positive' | 'negative' | 'neutral';
+    statusColor?: 'healthy' | 'degraded' | 'stalled' | 'manual';
+};
+
+const KPICard = ({ title, value, subvalue, icon, trend, statusColor }: KPICardProps) => {
     let colorClass = "text-slate-900";
     if (trend === 'positive') colorClass = "text-green-600";
     if (trend === 'negative') colorClass = "text-red-600";

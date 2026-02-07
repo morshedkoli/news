@@ -24,10 +24,11 @@ export async function GET(req: NextRequest) {
 
         return NextResponse.json(pages);
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error('Error fetching Facebook pages:', error);
         return NextResponse.json(
-            { error: error.message || 'Failed to fetch pages' },
+            { error: message || 'Failed to fetch pages' },
             { status: 500 }
         );
     }
@@ -57,10 +58,11 @@ export async function DELETE(req: NextRequest) {
 
         return NextResponse.json({ success: true });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error('Error deleting Facebook page:', error);
         return NextResponse.json(
-            { error: error.message || 'Failed to delete page' },
+            { error: message || 'Failed to delete page' },
             { status: 500 }
         );
     }
@@ -94,10 +96,11 @@ export async function PATCH(req: NextRequest) {
 
         return NextResponse.json({ success: true });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error('Error updating Facebook page:', error);
         return NextResponse.json(
-            { error: error.message || 'Failed to update page' },
+            { error: message || 'Failed to update page' },
             { status: 500 }
         );
     }

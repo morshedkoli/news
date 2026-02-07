@@ -32,9 +32,10 @@ export default function SetupPage() {
 
             setMessage("Success! Redirecting...");
             router.push("/");
-        } catch (error: any) {
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : "Unknown error";
             console.error(error);
-            setMessage(error.message || "Failed to create admin account.");
+            setMessage(message || "Failed to create admin account.");
         } finally {
             setLoading(false);
         }

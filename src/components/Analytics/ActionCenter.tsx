@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertTriangle, Play, Unlock, Info } from 'lucide-react';
+import { Play, Unlock, Info } from 'lucide-react';
 import { DashboardData } from '@/types/analytics';
 
 export default function ActionCenter({ data }: { data: DashboardData }) {

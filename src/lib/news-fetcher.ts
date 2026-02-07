@@ -13,7 +13,7 @@ export interface ArticleData {
 
 export type FetchResult =
     | { success: true; data: ArticleData }
-    | { success: false; error: string; details?: any };
+    | { success: false; error: string; details?: unknown };
 
 /**
  * Category mapping from English/URL patterns to Bangla
@@ -149,6 +149,20 @@ const CATEGORY_MAP: Record<string, string> = {
     'ধর্ম': 'ধর্ম',
 };
 
+export function normalizeCategory(category: string | null): string | null {
+    if (!category) return null;
+    const trimmed = category.trim();
+    if (!trimmed) return null;
+
+    const normalized = trimmed.toLowerCase();
+    const mapped = CATEGORY_MAP[normalized];
+    if (mapped) return mapped;
+
+    if (/[ঀ-৿]/.test(trimmed)) return trimmed;
+
+    return null;
+}
+
 /**
  * Extract category from article metadata and URL
  */
@@ -156,32 +170,28 @@ function extractCategory($: cheerio.CheerioAPI, url: string): string | null {
     // 1. Try article:section meta tag (most reliable)
     let category = $('meta[property="article:section"]').attr('content');
     if (category) {
-        category = category.trim().toLowerCase();
-        const mapped = CATEGORY_MAP[category];
+        const mapped = normalizeCategory(category);
         if (mapped) return mapped;
     }
 
     // 2. Try og:article:section
     category = $('meta[property="og:article:section"]').attr('content');
     if (category) {
-        category = category.trim().toLowerCase();
-        const mapped = CATEGORY_MAP[category];
+        const mapped = normalizeCategory(category);
         if (mapped) return mapped;
     }
 
     // 3. Try article:tag (sometimes used for category)
     category = $('meta[property="article:tag"]').attr('content');
     if (category) {
-        category = category.trim().toLowerCase();
-        const mapped = CATEGORY_MAP[category];
+        const mapped = normalizeCategory(category);
         if (mapped) return mapped;
     }
 
     // 4. Try category meta tag
     category = $('meta[name="category"]').attr('content');
     if (category) {
-        category = category.trim().toLowerCase();
-        const mapped = CATEGORY_MAP[category];
+        const mapped = normalizeCategory(category);
         if (mapped) return mapped;
     }
 
@@ -193,19 +203,18 @@ function extractCategory($: cheerio.CheerioAPI, url: string): string | null {
 
         // Check each path segment
         for (const part of pathParts) {
-            const normalized = part.toLowerCase();
-            const mapped = CATEGORY_MAP[normalized];
+            const mapped = normalizeCategory(part);
             if (mapped) return mapped;
         }
-    } catch (e) {
+    } catch {
         // Invalid URL, skip
     }
 
     // 6. Try breadcrumb navigation
     const breadcrumbs = $('.breadcrumb a, .breadcrumbs a, [class*="breadcrumb"] a');
     breadcrumbs.each((_, el) => {
-        const text = $(el).text().trim().toLowerCase();
-        const mapped = CATEGORY_MAP[text];
+        const text = $(el).text().trim();
+        const mapped = normalizeCategory(text);
         if (mapped && !category) {
             category = mapped;
             return false; // Break loop
@@ -216,8 +225,8 @@ function extractCategory($: cheerio.CheerioAPI, url: string): string | null {
     // 7. Try category links/tags in article
     const categoryLinks = $('a[rel="category"], .category a, .categories a, [class*="category"] a');
     categoryLinks.each((_, el) => {
-        const text = $(el).text().trim().toLowerCase();
-        const mapped = CATEGORY_MAP[text];
+        const text = $(el).text().trim();
+        const mapped = normalizeCategory(text);
         if (mapped && !category) {
             category = mapped;
             return false; // Break loop
@@ -321,11 +330,12 @@ export async function fetchArticle(url: string): Promise<FetchResult> {
             data: articleData
         };
 
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("Error fetching article:", error);
+        const errorObj = error instanceof Error ? error : new Error("Unknown error");
         return {
             success: false,
-            error: error.name === 'AbortError' ? 'Request Timed Out (15s)' : error.message
+            error: errorObj.name === 'AbortError' ? 'Request Timed Out (15s)' : errorObj.message
         };
     }
 }

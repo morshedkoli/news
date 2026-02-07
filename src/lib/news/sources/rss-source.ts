@@ -27,7 +27,13 @@ export class RssSource implements NewsSource {
             const now = Date.now();
             feeds = feeds.filter(f => {
                 if (!f.cooldown_until) return true;
-                return f.cooldown_until.toDate().getTime() < now;
+                const cooldownUntil = f.cooldown_until as { toDate?: () => Date } | Date | undefined;
+                const cooldownDate = cooldownUntil instanceof Date
+                    ? cooldownUntil
+                    : typeof cooldownUntil?.toDate === 'function'
+                        ? cooldownUntil.toDate()
+                        : null;
+                return cooldownDate ? cooldownDate.getTime() < now : true;
             });
 
             if (feeds.length === 0) {
@@ -66,8 +72,7 @@ export class RssSource implements NewsSource {
                             cleanUrl: normalizeUrl(item.link),
                             sourceName: feed.source_name || feed.name || 'RSS',
                             publishedAt: typeof item.pubDate === 'string' ? item.pubDate : undefined,
-                            feedId: feed.id,
-                            category: feed.category // Propagate category if defined on feed
+                            feedId: feed.id
                         });
                     }
                 } catch (e) {

@@ -44,7 +44,7 @@ export interface AiProvider {
     timeout_ms?: number;
 
     headers?: Record<string, string>;
-    body_template?: any;
+    body_template?: unknown;
     success_condition?: string;
     response_path?: string;
 

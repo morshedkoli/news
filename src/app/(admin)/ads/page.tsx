@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { auth } from '@/lib/firebase';
 import { AppAdConfig, AdPositionConfig } from '@/types/ads';
-import { toast } from 'react-hot-toast';
+import { toast } from "sonner";
 import Skeleton from "@/components/Skeleton";
 import { AlertTriangle } from 'lucide-react';
 
@@ -92,9 +92,10 @@ export default function AdsPage() {
             toast.success("Ad configuration saved!");
             // Refresh to get updated version
             fetchConfig();
-        } catch (error: any) {
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : "Unknown error";
             console.error(error);
-            toast.error(error.message || "Failed to save changes");
+            toast.error(message || "Failed to save changes");
         } finally {
             setSaving(false);
         }
@@ -102,7 +103,8 @@ export default function AdsPage() {
 
     const updateGlobal = (val: boolean) => setConfig({ ...config, global_enabled: val });
 
-    const updateSection = (section: 'banner' | 'native' | 'interstitial', field: keyof AdPositionConfig, value: any) => {
+    type AdPositionValue = AdPositionConfig[keyof AdPositionConfig];
+    const updateSection = (section: 'banner' | 'native' | 'interstitial', field: keyof AdPositionConfig, value: AdPositionValue) => {
         setConfig(prev => ({
             ...prev,
             [section]: {
@@ -213,7 +215,7 @@ function AdSectionCard({ title, desc, config, onChange }: {
     title: string,
     desc: string,
     config: AdPositionConfig,
-    onChange: (field: keyof AdPositionConfig, value: any) => void
+    onChange: (field: keyof AdPositionConfig, value: AdPositionConfig[keyof AdPositionConfig]) => void
 }) {
     return (
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 space-y-4">

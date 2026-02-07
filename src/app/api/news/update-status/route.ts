@@ -19,16 +19,49 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
         }
 
+        const newsRef = dbAdmin.collection("news").doc(id);
+        const newsSnapshot = await newsRef.get();
+        if (!newsSnapshot.exists) throw new Error("News not found");
+
+        const snapshotData = newsSnapshot.data();
+        const hasEnglishLetters = (value: unknown) => typeof value === 'string' && /[A-Za-z]/.test(value);
+        const isImageMissing = !snapshotData?.image || (typeof snapshotData.image === 'string' && snapshotData.image.trim().length === 0);
+        const englishDetected = hasEnglishLetters(snapshotData?.title)
+            || hasEnglishLetters(snapshotData?.summary)
+            || hasEnglishLetters(snapshotData?.content)
+            || hasEnglishLetters(snapshotData?.excerpt);
+
+        if (published && (englishDetected || isImageMissing)) {
+            const reasons = [
+                englishDetected ? 'ENGLISH_DETECTED' : null,
+                isImageMissing ? 'IMAGE_MISSING' : null
+            ].filter(Boolean);
+
+            await dbAdmin.runTransaction(async (t) => {
+                const docSnap = await t.get(newsRef);
+                if (!docSnap.exists) return;
+                const data = docSnap.data();
+                const categoryId = data?.categoryId;
+                if (categoryId) {
+                    await CategoryService.decrementCategoryCount(categoryId, t);
+                }
+                t.delete(newsRef);
+            });
+
+            return NextResponse.json({
+                success: false,
+                deleted: true,
+                reasons
+            }, { status: 422 });
+        }
+
         // 3. Transaction
         await dbAdmin.runTransaction(async (t) => {
-            const newsRef = dbAdmin.collection("news").doc(id);
             const newsDoc = await t.get(newsRef);
 
             if (!newsDoc.exists) throw new Error("News not found");
 
             const data = newsDoc.data();
-            const category = data?.category;
-
             // Logic:
             // If publishing: set published_at = now, Increment count
             // If unpublishing: set published_at = null, Decrement count
@@ -81,7 +114,7 @@ export async function POST(req: Request) {
                     newsData?.image,
                     newsData?.source_url
                 );
-            } catch (error: any) {
+            } catch (error: unknown) {
                 // Log but don't fail the publish operation
                 console.error('Facebook auto-post failed:', error);
             }
@@ -89,8 +122,9 @@ export async function POST(req: Request) {
 
         return NextResponse.json({ success: true });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error("Update Status Error:", error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return NextResponse.json({ error: message }, { status: 500 });
     }
 }

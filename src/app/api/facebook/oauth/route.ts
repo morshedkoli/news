@@ -1,11 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { FacebookService } from '@/lib/facebook-service';
 
 /**
  * Initiate Facebook OAuth flow
  * GET /api/facebook/oauth
  */
-export async function GET(req: NextRequest) {
+export async function GET() {
     try {
         // Generate a random state for CSRF protection
         const state = Math.random().toString(36).substring(7);
@@ -24,10 +24,11 @@ export async function GET(req: NextRequest) {
 
         return response;
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error('Facebook OAuth initiation error:', error);
         return NextResponse.json(
-            { error: error.message || 'Failed to initiate Facebook OAuth' },
+            { error: message || 'Failed to initiate Facebook OAuth' },
             { status: 500 }
         );
     }

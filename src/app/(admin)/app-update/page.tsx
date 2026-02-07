@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { db } from '@/lib/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { AppVersionConfig } from '@/types/app-config';
-import { toast } from 'react-hot-toast';
+import { toast } from "sonner";
 import { Smartphone, Save, AlertCircle } from 'lucide-react';
 import Skeleton from '@/components/Skeleton';
 
@@ -61,7 +61,7 @@ export default function AppUpdatePage() {
         }
     };
 
-    const handleChange = (field: keyof AppVersionConfig, value: any) => {
+    const handleChange = (field: keyof AppVersionConfig, value: AppVersionConfig[keyof AppVersionConfig]) => {
         setConfig(prev => ({
             ...prev,
             [field]: value

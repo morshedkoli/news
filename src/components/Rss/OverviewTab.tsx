@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useEffect } from "react";
+import type { ReactNode } from "react";
 import { RssSettings, RssRunLog } from "@/types/rss";
 import { Timestamp, collection, query, orderBy, limit, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { formatDistanceToNow, addMinutes, format } from "date-fns";
+import { formatDistanceToNow } from "date-fns";
 import {
     AlertTriangle, CheckCircle, Clock, ShieldAlert, Activity,
     Settings, Target, Zap, TrendingDown, HelpCircle, ArrowRight
@@ -297,7 +298,14 @@ export default function OverviewTab({ settings, isLoading }: OverviewTabProps) {
     );
 }
 
-function BottleneckBar({ label, count, total, color }: any) {
+type BottleneckBarProps = {
+    label: string;
+    count: number;
+    total: number;
+    color: string;
+};
+
+function BottleneckBar({ label, count, total, color }: BottleneckBarProps) {
     if (count === 0) return null;
     const percentage = Math.round((count / total) * 100);
     return (
@@ -313,7 +321,12 @@ function BottleneckBar({ label, count, total, color }: any) {
     );
 }
 
-function ActionItem({ text, icon }: any) {
+type ActionItemProps = {
+    text: string;
+    icon: ReactNode;
+};
+
+function ActionItem({ text, icon }: ActionItemProps) {
     return (
         <div className="flex items-start gap-3 bg-white p-3 rounded-lg border border-emerald-100 shadow-sm">
             <div className="text-emerald-600 mt-0.5">{icon}</div>

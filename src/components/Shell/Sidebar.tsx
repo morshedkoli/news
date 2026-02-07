@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, PlusCircle, Rss, List, LogOut, X, Newspaper, BarChart3, Cpu, Megaphone, Smartphone, Activity, ShieldAlert, Facebook, Users } from "lucide-react";
+import { LayoutDashboard, PlusCircle, Rss, List, X, BarChart3, Cpu, Megaphone, Smartphone, Facebook, Users } from "lucide-react";
 import clsx from "clsx";
 import Logo from "@/components/Logo";
 
@@ -16,10 +16,8 @@ const NAV_ITEMS = [
     { label: "Add News", href: "/news/add", icon: PlusCircle },
     { label: "News List", href: "/news", icon: List },
     { label: "Analytics", href: "/analytics", icon: BarChart3 },
-    { label: "AI Providers", href: "/ai-providers", icon: Cpu },
-    { label: "RSS Feeds", href: "/rss", icon: Rss },
-    { label: "RSS Health", href: "/rss/dashboard", icon: Activity },
-    { label: "Blocked News", href: "/blocked-news", icon: ShieldAlert },
+    { label: "AI Management", href: "/ai-management", icon: Cpu },
+    { label: "RSS Management", href: "/rss-management", icon: Rss },
     { label: "Users", href: "/users", icon: Users },
     { label: "Facebook", href: "/facebook", icon: Facebook },
     { label: "Ads Mgmt", href: "/ads", icon: Megaphone },

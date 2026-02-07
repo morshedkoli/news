@@ -10,8 +10,7 @@ import {
     Tooltip,
     ResponsiveContainer,
     BarChart,
-    Bar,
-    Legend
+    Bar
 } from 'recharts';
 import { TrendingUp, Calendar, Clock } from 'lucide-react';
 

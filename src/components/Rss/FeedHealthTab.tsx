@@ -2,10 +2,10 @@
 
 import { useState, useEffect } from "react";
 import { db } from "@/lib/firebase";
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, Timestamp, deleteField } from "firebase/firestore";
+import { collection, query, orderBy, onSnapshot, doc, updateDoc, deleteField } from "firebase/firestore";
 import { RssFeed, RssSettings } from "@/types/rss";
 import { formatDistanceToNow } from "date-fns";
-import { MoreHorizontal, Play, Pause, RefreshCw, AlertCircle, Wifi } from "lucide-react";
+import { Play, Pause, RefreshCw } from "lucide-react";
 
 export default function FeedHealthTab() {
     const [feeds, setFeeds] = useState<RssFeed[]>([]);
@@ -68,6 +68,16 @@ export default function FeedHealthTab() {
     );
 }
 
+type FirestoreTimestamp = { toDate?: () => Date };
+
+function getDateValue(value: unknown): Date | null {
+    if (!value) return null;
+    if (value instanceof Date) return value;
+    if (typeof value === 'string' || typeof value === 'number') return new Date(value);
+    const maybe = value as FirestoreTimestamp;
+    return typeof maybe.toDate === 'function' ? maybe.toDate() : null;
+}
+
 function FeedCard({ feed, onToggle, onReset }: { feed: RssFeed, onToggle: () => void, onReset: () => void }) {
     // Determine Health
     // Healthy: Last success < 24h, failures < 3
@@ -75,8 +85,8 @@ function FeedCard({ feed, onToggle, onReset }: { feed: RssFeed, onToggle: () => 
     // Empty: consecutive_empty > 5
     // Idle: No success in > 24h but no failures
     const failures = feed.failure_count || 0;
-    const consecutiveEmpty = (feed as any).consecutive_empty_runs || 0;
-    const lastSuccess = feed.last_success_at ? feed.last_success_at.toDate() : null;
+    const consecutiveEmpty = feed.consecutive_empty_runs || 0;
+    const lastSuccess = getDateValue(feed.last_success_at);
     const hoursSinceSuccess = lastSuccess ? (Date.now() - lastSuccess.getTime()) / (1000 * 3600) : 999;
 
     let health: 'healthy' | 'idle' | 'broken' | 'empty' = 'healthy';
@@ -91,7 +101,7 @@ function FeedCard({ feed, onToggle, onReset }: { feed: RssFeed, onToggle: () => 
 
     // Cooldown check
     const now = new Date();
-    const cooldownUntil = feed.cooldown_until ? feed.cooldown_until.toDate() : null;
+    const cooldownUntil = getDateValue(feed.cooldown_until);
     const inCooldown = cooldownUntil && cooldownUntil > now;
 
     return (

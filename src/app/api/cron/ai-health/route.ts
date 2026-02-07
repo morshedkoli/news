@@ -6,7 +6,6 @@ import {
     recoverDegradedProviders,
     invalidateProviderCache
 } from '@/lib/ai-engine';
-import { dbAdmin } from '@/lib/firebase-admin';
 
 export const maxDuration = 60;
 export const revalidate = 0;
@@ -60,6 +59,7 @@ export async function GET() {
         return NextResponse.json({
             success: true,
             timestamp: new Date().toISOString(),
+            results,
             activeProviders: results,
             recovery: {
                 recovered: recovery.recovered,
@@ -67,8 +67,9 @@ export async function GET() {
             }
         });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error("Health check failed:", error);
-        return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+        return NextResponse.json({ success: false, error: message }, { status: 500 });
     }
 }

@@ -1,5 +1,5 @@
 import { DashboardData } from '@/types/analytics';
-import { Database, Cpu, PieChart, Lock } from 'lucide-react';
+import { Cpu, Lock } from 'lucide-react';
 
 export default function DeepStats({ data }: { data: DashboardData }) {
     return (

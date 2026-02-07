@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { auth } from '@/lib/firebase';
-import { toast } from 'react-hot-toast';
+import { toast } from "sonner";
 import Skeleton from '@/components/Skeleton';
 import { Facebook, Trash2, TestTube, Power, PowerOff, ExternalLink } from 'lucide-react';
 import { FacebookPageConnection } from '@/types/facebook';
@@ -13,6 +13,15 @@ export default function FacebookPage() {
     const [pages, setPages] = useState<FacebookPageConnection[]>([]);
     const [connecting, setConnecting] = useState(false);
     const [testing, setTesting] = useState<string | null>(null);
+
+    type FirestoreTimestamp = { toDate?: () => Date };
+    const getDateValue = (value: unknown): Date | null => {
+        if (!value) return null;
+        if (value instanceof Date) return value;
+        if (typeof value === 'string' || typeof value === 'number') return new Date(value);
+        const maybe = value as FirestoreTimestamp;
+        return typeof maybe.toDate === 'function' ? maybe.toDate() : null;
+    };
 
     useEffect(() => {
         fetchPages();
@@ -45,7 +54,7 @@ export default function FacebookPage() {
 
             const data = await res.json();
             setPages(data);
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error(error);
             toast.error('Failed to fetch Facebook pages');
         } finally {
@@ -74,7 +83,7 @@ export default function FacebookPage() {
 
             toast.success(`Page ${!currentEnabled ? 'enabled' : 'disabled'}`);
             fetchPages();
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error(error);
             toast.error('Failed to update page');
         }
@@ -96,7 +105,7 @@ export default function FacebookPage() {
 
             toast.success('Page removed successfully');
             fetchPages();
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error(error);
             toast.error('Failed to remove page');
         }
@@ -122,7 +131,7 @@ export default function FacebookPage() {
             } else {
                 toast.error(result.error || 'Test post failed');
             }
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error(error);
             toast.error('Failed to create test post');
         } finally {
@@ -202,7 +211,7 @@ export default function FacebookPage() {
                     </div>
                     <div className="divide-y divide-slate-100">
                         {pages.map((page) => {
-                            const expiresAt = page.token_expires_at?.toDate?.() || new Date(page.token_expires_at as any);
+                            const expiresAt = getDateValue(page.token_expires_at) || new Date();
                             const daysUntilExpiry = Math.floor((expiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
                             const isExpiringSoon = daysUntilExpiry < 7;
                             const isExpired = daysUntilExpiry < 0;
@@ -240,7 +249,7 @@ export default function FacebookPage() {
                                                 <span>Total Posts: {page.total_posts}</span>
                                                 {page.last_posted_at && (
                                                     <span>
-                                                        Last Posted: {new Date(page.last_posted_at as any).toLocaleDateString()}
+                                                        Last Posted: {(getDateValue(page.last_posted_at) || new Date()).toLocaleDateString()}
                                                     </span>
                                                 )}
                                             </div>

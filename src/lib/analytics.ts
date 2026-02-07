@@ -1,7 +1,15 @@
 import { dbAdmin } from "@/lib/firebase-admin";
-import { RssFeed } from "@/types/rss";
+import { RssFeed, RssRunLog } from "@/types/rss";
 import { DashboardData } from "@/types/analytics";
 import { Timestamp } from 'firebase-admin/firestore';
+
+function getDateValue(value: unknown): Date | null {
+    if (!value) return null;
+    if (value instanceof Date) return value;
+    if (typeof value === 'string' || typeof value === 'number') return new Date(value);
+    const maybe = value as { toDate?: () => Date };
+    return typeof maybe.toDate === 'function' ? maybe.toDate() : null;
+}
 
 export async function getAnalyticsData(): Promise<DashboardData> {
     const now = new Date();
@@ -82,8 +90,8 @@ export async function getAnalyticsData(): Promise<DashboardData> {
     for (let i = 0; i < 24; i++) hourlyMap.set(i, 0);
 
     newsTodaySnap.docs.forEach(doc => {
-        const p = (doc.data() as any).published_at;
-        const date = p && typeof p.toDate === 'function' ? p.toDate() : new Date(p);
+        const data = doc.data() as Record<string, unknown>;
+        const date = getDateValue(data.published_at) || new Date(0);
         const hour = date.getHours();
         hourlyMap.set(hour, (hourlyMap.get(hour) || 0) + 1);
     });
@@ -96,8 +104,8 @@ export async function getAnalyticsData(): Promise<DashboardData> {
     // Daily
     const dailyMap = new Map<string, number>();
     newsSevenDaysSnap.docs.forEach(doc => {
-        const p = (doc.data() as any).published_at;
-        const date = p && typeof p.toDate === 'function' ? p.toDate() : new Date(p);
+        const data = doc.data() as Record<string, unknown>;
+        const date = getDateValue(data.published_at) || new Date(0);
         const key = `${date.getMonth() + 1}/${date.getDate()}`;
         dailyMap.set(key, (dailyMap.get(key) || 0) + 1);
     });
@@ -139,19 +147,20 @@ export async function getAnalyticsData(): Promise<DashboardData> {
         else if (data.consecutive_empty_runs && data.consecutive_empty_runs > 10) health = 'warning';
         else if (!data.enabled) health = 'warning'; // Or just separate status? Keep simple.
 
+        const lastPostDate = getDateValue(data.last_success_at);
         return {
             id: doc.id,
             name: data.source_name || data.name || "Unknown",
             itemsPosted: 0, // Hard to calculate without costly query. Omit/Placeholder.
             status: health,
-            lastPost: data.last_success_at ? data.last_success_at.toDate().toISOString() : null,
+            lastPost: lastPostDate ? lastPostDate.toISOString() : null,
             failureCount: data.consecutive_failures || 0
         };
     });
 
     // 5. Deep System Analysis
     // statsData is already defined above (deduplicated)
-    const lockUntil = statsData.global_lock_until ? statsData.global_lock_until.toDate() : null;
+    const lockUntil = getDateValue(statsData.global_lock_until);
     const isLocked = lockUntil && lockUntil.getTime() > now.getTime();
 
     // Lock Status
@@ -162,10 +171,10 @@ export async function getAnalyticsData(): Promise<DashboardData> {
     };
 
     // Performance Metrics
-    const recentRuns = runsTodaySnap.docs.map(d => d.data() as any);
-    const totalAiFailures = recentRuns.reduce((acc, run) => acc + (run.ai_failures || 0), 0);
-    const dedupExits = recentRuns.filter(r => r.exit_reason?.includes('duplicate')).length; // Approximate
-    const retriesTriggered = recentRuns.filter(r => r.tried_sources && r.tried_sources.length > 1).length;
+    const recentRuns = runsTodaySnap.docs.map(d => d.data() as Record<string, unknown>);
+    const totalAiFailures = recentRuns.reduce((acc, run) => acc + (typeof run.ai_failures === 'number' ? run.ai_failures : 0), 0);
+    const dedupExits = recentRuns.filter(r => typeof r.exit_reason === 'string' && r.exit_reason.includes('duplicate')).length; // Approximate
+    const retriesTriggered = recentRuns.filter(r => Array.isArray(r.tried_sources) && r.tried_sources.length > 1).length;
 
     const performance = {
         dedupRate: totalRuns > 0 ? Math.round((dedupExits / totalRuns) * 100) : 0,
@@ -175,7 +184,8 @@ export async function getAnalyticsData(): Promise<DashboardData> {
 
     // System Status Logic (Enhanced)
     if (statsData.last_news_posted_at) {
-        const lastPostTime = statsData.last_news_posted_at.toDate().getTime();
+        const lastPostDate = getDateValue(statsData.last_news_posted_at);
+        const lastPostTime = lastPostDate ? lastPostDate.getTime() : 0;
         const minsSinceLastPost = (now.getTime() - lastPostTime) / 60000;
 
         if (minsSinceLastPost > 120) {
@@ -194,9 +204,9 @@ export async function getAnalyticsData(): Promise<DashboardData> {
     // Next Window Calculation
     let nextPostWindow = "Now";
     if (systemStatus === 'healthy' && statsData.last_news_posted_at) {
-        const lastPost = statsData.last_news_posted_at.toDate();
-        const nextTime = new Date(lastPost.getTime() + 30 * 60000); // 30m interval
-        const diffMins = Math.round((nextTime.getTime() - now.getTime()) / 60000);
+        const lastPost = getDateValue(statsData.last_news_posted_at);
+        const nextTime = lastPost ? new Date(lastPost.getTime() + 30 * 60000) : null; // 30m interval
+        const diffMins = nextTime ? Math.round((nextTime.getTime() - now.getTime()) / 60000) : 0;
         if (diffMins > 0) nextPostWindow = `in ${diffMins} mins`;
         else nextPostWindow = "Overdue";
     }
@@ -209,7 +219,7 @@ export async function getAnalyticsData(): Promise<DashboardData> {
         const lastRun = recentRuns[0];
         let stallReason = "No posts for > 2 hours.";
 
-        if (lastRun?.exit_reason) {
+        if (typeof lastRun?.exit_reason === 'string') {
             const exitReason = lastRun.exit_reason;
             if (exitReason.includes('no_candidates')) {
                 stallReason = "RSS feeds returned no new candidates. Check feed URLs or add more sources.";
@@ -312,24 +322,27 @@ export async function getAnalyticsData(): Promise<DashboardData> {
         },
         system: {
             lockStatus,
-            consecutiveFailures: statsData.consecutive_failed_runs || 0,
-            lastRunStatus: recentRuns[0]?.exit_reason || "unknown",
-            lastRunTime: recentRuns[0]?.started_at || ""
+            consecutiveFailures: typeof statsData.consecutive_failed_runs === 'number' ? statsData.consecutive_failed_runs : 0,
+            lastRunStatus: typeof recentRuns[0]?.exit_reason === 'string' ? recentRuns[0].exit_reason : "unknown",
+            lastRunTime: typeof recentRuns[0]?.started_at === 'string' ? recentRuns[0].started_at : ""
         },
         performance,
         cron: {
             runs: runsTodaySnap.docs.slice(0, 20).map(d => {
-                const data = d.data();
+                const data = d.data() as RssRunLog;
                 return {
                     id: d.id,
                     ...data,
-                    success: !!(data.post_published || data.success)
-                } as any;
+                    success: Boolean(data.post_published || data.success)
+                };
             }),
             totalRuns,
             failedRuns
         },
-        feeds: feeds.sort((a, b) => (a.status === 'error' ? -1 : 1)),
+        feeds: feeds.sort((a, b) => {
+            if (a.status === b.status) return 0;
+            return a.status === 'error' ? -1 : 1;
+        }),
         insights
     };
 }

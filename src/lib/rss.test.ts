@@ -45,7 +45,8 @@ describe('RSS Deduplication', () => {
 
 describe('AI Fallback Logic (Simulation)', () => {
     // Replicating the logic from route.ts to verify the algorithm behaves as expected
-    const algorithm = (candidates: any[]) => {
+    type Candidate = { score: number; title: string; category?: string; [key: string]: unknown };
+    const algorithm = (candidates: Candidate[]) => {
         // Filter valid
         // Sort by score DESC
         const sorted = [...candidates].sort((a, b) => b.score - a.score);

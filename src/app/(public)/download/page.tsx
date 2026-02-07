@@ -1,6 +1,6 @@
 "use client";
 
-import { Download, Shield, Zap, Globe, Smartphone, Moon, CheckCircle } from "lucide-react";
+import { Download, Shield, Zap, Globe, Moon } from "lucide-react";
 import Link from "next/link";
 
 export const dynamic = "force-static";

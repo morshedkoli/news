@@ -7,11 +7,13 @@ import Skeleton from "@/components/Skeleton";
 import { auth } from "@/lib/firebase";
 import { toast } from "sonner";
 
+type FirestoreTimestamp = { toDate?: () => Date; _seconds?: number };
+
 interface CategoryData {
     name: string;
     slug: string;
     postCount: number;
-    lastPostAt: any;
+    lastPostAt: FirestoreTimestamp | null;
     enabled: boolean;
 }
 
@@ -38,7 +40,7 @@ export default function CategoriesPage() {
         fetchCategories();
     }, []);
 
-    const toggleCategory = async (slug: string, currentStatus: boolean) => {
+    const toggleCategory = async (slug: string) => {
         setToggling(slug);
         try {
             const token = await auth.currentUser?.getIdToken();
@@ -62,9 +64,10 @@ export default function CategoriesPage() {
             ));
 
             toast.success(`Category ${data.enabled ? 'enabled' : 'disabled'}`);
-        } catch (error: any) {
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : "Unknown error";
             console.error("Failed to toggle category", error);
-            toast.error(error.message || "Failed to toggle category");
+            toast.error(message || "Failed to toggle category");
         } finally {
             setToggling(null);
         }
@@ -136,7 +139,14 @@ export default function CategoriesPage() {
                                             {cat.lastPostAt ? (
                                                 <div className="flex items-center gap-1.5">
                                                     <Calendar size={14} className="text-slate-400" />
-                                                    {format(new Date(cat.lastPostAt._seconds * 1000), "MMM d, yyyy")}
+                                                    {(() => {
+                                                        const date = typeof cat.lastPostAt.toDate === "function"
+                                                            ? cat.lastPostAt.toDate()
+                                                            : cat.lastPostAt._seconds
+                                                                ? new Date(cat.lastPostAt._seconds * 1000)
+                                                                : null;
+                                                        return date ? format(date, "MMM d, yyyy") : "-";
+                                                    })()}
                                                 </div>
                                             ) : "-"}
                                         </td>
@@ -153,7 +163,7 @@ export default function CategoriesPage() {
                                         </td>
                                         <td className="px-6 py-4 text-right">
                                             <button
-                                                onClick={() => toggleCategory(cat.slug, cat.enabled !== false)}
+                                                onClick={() => toggleCategory(cat.slug)}
                                                 disabled={toggling === cat.slug}
                                                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition ${cat.enabled !== false
                                                     ? "bg-slate-100 text-slate-600 hover:bg-slate-200"

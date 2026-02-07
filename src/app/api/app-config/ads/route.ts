@@ -45,11 +45,11 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'Invalid config: global_enabled must be boolean' }, { status: 400 });
         }
 
-        const positions: Array<keyof Omit<AppAdConfig, 'global_enabled' | 'last_updated'>> = ['banner', 'native', 'interstitial'];
+        const positions: Array<keyof Pick<AppAdConfig, 'banner' | 'native' | 'interstitial'>> = ['banner', 'native', 'interstitial'];
         const validProviders = ['admob', 'custom', 'none'];
 
         for (const pos of positions) {
-            const p = (cfg as any)[pos];
+            const p = cfg[pos];
             if (!p || typeof p.enabled !== 'boolean') {
                 return NextResponse.json({ error: `Invalid config: ${pos}.enabled must be boolean` }, { status: 400 });
             }
@@ -82,8 +82,9 @@ export async function POST(req: Request) {
         }, { merge: true });
 
         return NextResponse.json({ success: true, config: cfg });
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error('Failed to update ad config:', error);
-        return NextResponse.json({ error: error.message || 'Failed to update ad config' }, { status: 500 });
+        return NextResponse.json({ error: message || 'Failed to update ad config' }, { status: 500 });
     }
 }

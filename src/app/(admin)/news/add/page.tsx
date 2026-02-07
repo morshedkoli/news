@@ -2,28 +2,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { db } from "@/lib/firebase";
 import { Loader2, Save, Link as LinkIcon, AlertCircle, Tag } from "lucide-react";
-import Link from "next/link";
 import { useAuth } from "@/context/AuthContext";
-import { CATEGORIES } from "../page";
+import { CATEGORIES } from "@/lib/news-categories";
 import Skeleton from "@/components/Skeleton";
-
-// Client-side URL normalization (mirrors backend logic roughly)
-function normalizeUrlClient(url: string): string {
-    try {
-        const u = new URL(url);
-        const paramsToRemove = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'fbclid', 'gclid', 'ref', 'source'];
-        paramsToRemove.forEach(p => u.searchParams.delete(p));
-        u.protocol = 'https:';
-        u.hostname = u.hostname.toLowerCase();
-        let path = decodeURIComponent(u.pathname);
-        if (path.endsWith('/') && path.length > 1) path = path.slice(0, -1);
-        return u.origin + path;
-    } catch (e) {
-        return url;
-    }
-}
 
 export default function AddNewsPage() {
     const [url, setUrl] = useState("");
@@ -45,7 +27,20 @@ export default function AddNewsPage() {
     } | null>(null);
     const [providerInfo, setProviderInfo] = useState<{ provider: string; model: string } | null>(null);
     const [language, setLanguage] = useState<string | null>(null);
-    const [duplicateWarning, setDuplicateWarning] = useState<{ error: string; details: string; article?: any; generated?: any } | null>(null);
+    type DuplicateArticle = {
+        title: string;
+        excerpt?: string;
+        textContent?: string;
+        image?: string;
+        siteName?: string;
+        category?: string;
+    };
+    type GeneratedArticle = {
+        title?: string;
+        summary?: string;
+        category?: string;
+    };
+    const [duplicateWarning, setDuplicateWarning] = useState<{ error: string; details: string; article?: DuplicateArticle; generated?: GeneratedArticle } | null>(null);
     const [isDuplicate, setIsDuplicate] = useState(false);
 
     const updateProgress = (step: number, message: string) => {
@@ -123,9 +118,10 @@ export default function AddNewsPage() {
             } else {
                 updateProgress(100, "Done!");
             }
-        } catch (err: any) {
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : "Unknown error";
             console.error(err);
-            setError(err.message);
+            setError(message);
             updateProgress(0, "");
         } finally {
             setLoading(false);
@@ -136,13 +132,15 @@ export default function AddNewsPage() {
         if (!duplicateWarning?.article) return;
 
         const data = duplicateWarning;
+        const article = data.article;
+        if (!article) return;
         setNewsData({
-            title: data.generated?.title || data.article.title,
-            summary: data.generated?.summary || data.article.excerpt || data.article.textContent?.slice(0, 300) + "...",
-            image: data.article.image || "",
+            title: data.generated?.title || article.title,
+            summary: data.generated?.summary || article.excerpt || article.textContent?.slice(0, 300) + "...",
+            image: article.image || "",
             source_url: url,
-            source_name: data.article.siteName || "Unknown",
-            category: data.article.category || data.generated?.category || "সাধারণ",
+            source_name: article.siteName || "Unknown",
+            category: article.category || data.generated?.category || "সাধারণ",
         });
 
         setIsDuplicate(true);
@@ -204,9 +202,10 @@ export default function AddNewsPage() {
                 router.push("/");
             }, 1000);
 
-        } catch (err: any) {
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : "Unknown error";
             console.error("Publish Error:", err);
-            setError("Failed to publish: " + err.message);
+            setError("Failed to publish: " + message);
             updateProgress(0, "");
         } finally {
             setPublishing(false);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { User, Mail, Shield, AlertCircle, Edit2, Loader2, Users } from "lucide-react";
+import { Edit2, Users } from "lucide-react";
 import Skeleton from "@/components/Skeleton";
 import { toast } from "sonner";
 import EditUserModal from "@/components/Users/EditUserModal";
@@ -46,7 +46,7 @@ export default function UsersPage() {
         setIsEditModalOpen(true);
     };
 
-    const handleUserUpdated = (updatedUser: AdminUser) => {
+    const handleUserUpdated = (updatedUser: { uid: string; displayName?: string; email?: string }) => {
         setUsers(prev => prev.map(u => u.uid === updatedUser.uid ? { ...u, ...updatedUser } : u));
     };
 

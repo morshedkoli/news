@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { auth } from '@/lib/firebase';
-import { toast } from 'react-hot-toast';
+import { toast } from "sonner";
 import { Settings, Eye, EyeOff, Save, CheckCircle } from 'lucide-react';
 
 interface FacebookSettings {
@@ -40,7 +40,7 @@ export default function FacebookCredentials() {
 
             const data = await res.json();
             setSettings(data);
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error(error);
             toast.error('Failed to load Facebook settings');
         } finally {
@@ -76,9 +76,10 @@ export default function FacebookCredentials() {
             toast.success('Facebook credentials saved successfully!');
             setSettings(prev => ({ ...prev, configured: true }));
             loadSettings(); // Reload to mask the secret
-        } catch (error: any) {
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : "Unknown error";
             console.error(error);
-            toast.error(error.message || 'Failed to save settings');
+            toast.error(message || 'Failed to save settings');
         } finally {
             setSaving(false);
         }

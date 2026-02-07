@@ -13,7 +13,7 @@ interface EditUserModalProps {
     };
     isOpen: boolean;
     onClose: () => void;
-    onUserUpdated: (user: any) => void;
+    onUserUpdated: (user: { uid: string; displayName?: string; email?: string }) => void;
 }
 
 export default function EditUserModal({ user, isOpen, onClose, onUserUpdated }: EditUserModalProps) {
@@ -60,9 +60,10 @@ export default function EditUserModal({ user, isOpen, onClose, onUserUpdated }: 
             toast.success("User updated successfully");
             onUserUpdated(data.user);
             onClose();
-        } catch (error: any) {
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : "Unknown error";
             console.error("Update user error:", error);
-            toast.error(error.message || "Failed to update user");
+            toast.error(message || "Failed to update user");
         } finally {
             setIsSubmitting(false);
         }

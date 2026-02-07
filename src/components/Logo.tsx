@@ -1,6 +1,3 @@
-import React from 'react';
-
-
 interface LogoProps {
     className?: string;
     showText?: boolean;
@@ -8,9 +5,6 @@ interface LogoProps {
 }
 
 export default function Logo({ className = "", showText = true, variant = 'default' }: LogoProps) {
-    const primaryColor = variant === 'monochrome' ? 'currentColor' : variant === 'white' ? '#FFFFFF' : '#4F46E5'; // Indigo-600
-    const secondaryColor = variant === 'monochrome' ? 'currentColor' : variant === 'white' ? '#E2E8F0' : '#1E293B'; // Slate-800
-
     return (
         <div className={`flex items-center gap-3 ${className}`}>
             {/* NewsByte Brand Icon */}

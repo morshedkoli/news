@@ -57,10 +57,11 @@ export async function PATCH(
             message: `Category ${!currentEnabled ? 'enabled' : 'disabled'}`
         });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error("Failed to toggle category:", error);
         return NextResponse.json(
-            { error: error.message || "Failed to toggle category" },
+            { error: message || "Failed to toggle category" },
             { status: 500 }
         );
     }

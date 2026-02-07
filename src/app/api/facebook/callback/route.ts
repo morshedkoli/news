@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { FacebookService } from '@/lib/facebook-service';
-import { authAdmin } from '@/lib/firebase-admin';
 
 /**
  * Handle Facebook OAuth callback
@@ -77,10 +76,11 @@ export async function GET(req: NextRequest) {
 
         return response;
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error('Facebook callback error:', error);
         return NextResponse.redirect(
-            new URL(`/facebook?error=${encodeURIComponent(error.message || 'callback_failed')}`, req.url)
+            new URL(`/facebook?error=${encodeURIComponent(message || 'callback_failed')}`, req.url)
         );
     }
 }

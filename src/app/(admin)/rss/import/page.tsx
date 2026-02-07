@@ -119,10 +119,11 @@ export default function ImportFeedsPage() {
                 });
 
                 added.push(feed.name);
-            } catch (error: any) {
+            } catch (error: unknown) {
+                const message = error instanceof Error ? error.message : "Unknown error";
                 errors.push({
                     name: feed.name,
-                    error: error.message
+                    error: message
                 });
             }
         }

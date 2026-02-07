@@ -41,13 +41,12 @@ const createAdmin = async () => {
         console.log(`Creating admin account for: ${email}...`);
 
         // 1. Create or Get User in Auth
-        let userRecord;
         try {
-            userRecord = await auth.getUserByEmail(email);
+            await auth.getUserByEmail(email);
             console.log("User already exists in Auth, updating role...");
         } catch (e) {
             if (e.code === 'auth/user-not-found') {
-                userRecord = await auth.createUser({
+                await auth.createUser({
                     email: email,
                     password: password,
                     emailVerified: true,

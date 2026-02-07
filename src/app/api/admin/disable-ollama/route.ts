@@ -40,11 +40,12 @@ export async function POST() {
             disabled: results
         });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error('Failed to disable Ollama:', error);
         return NextResponse.json({
             success: false,
-            error: error.message
+            error: message
         }, { status: 500 });
     }
 }

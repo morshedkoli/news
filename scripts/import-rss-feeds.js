@@ -80,52 +80,6 @@ const RSS_FEEDS = [
 ];
 
 /**
- * Browser Console Version (Firebase Console)
- * 
- * 1. Go to Firebase Console → Firestore Database
- * 2. Open browser console (F12)
- * 3. Paste this entire script
- * 4. Run: await bulkImportFeeds()
- */
-async function bulkImportFeeds() {
-    if (typeof firebase === 'undefined') {
-        console.error('❌ Firebase not loaded. Make sure you are on Firebase Console.');
-        return;
-    }
-
-    const db = firebase.firestore();
-    let successCount = 0;
-    let errorCount = 0;
-
-    console.log('📥 Starting bulk import of RSS feeds...\n');
-
-    for (const feed of RSS_FEEDS) {
-        try {
-            const feedData = {
-                ...feed,
-                last_checked_at: null,
-                last_success_at: null,
-                cooldown_until: null,
-                failure_count: 0,
-                error_log: ""
-            };
-
-            await db.collection('rss_feeds').add(feedData);
-            console.log(`✅ Added: ${feed.name}`);
-            successCount++;
-        } catch (error) {
-            console.error(`❌ Failed to add ${feed.name}:`, error);
-            errorCount++;
-        }
-    }
-
-    console.log(`\n📊 Import Summary:`);
-    console.log(`   ✅ Success: ${successCount}`);
-    console.log(`   ❌ Errors: ${errorCount}`);
-    console.log(`   📝 Total: ${RSS_FEEDS.length}`);
-}
-
-/**
  * Node.js Version (Firebase Admin SDK)
  * 
  * Run: node import-rss-feeds.js
@@ -180,12 +134,6 @@ if (typeof module !== 'undefined' && module.exports) {
 // Instructions
 console.log(`
 📋 RSS Feeds Bulk Import Script
-
-🌐 Browser Console (Firebase Console):
-   1. Go to Firebase Console → Firestore
-   2. Open browser console (F12)
-   3. Paste this script
-   4. Run: await bulkImportFeeds()
 
 💻 Node.js (Firebase Admin SDK):
    1. Save this file as import-rss-feeds.js

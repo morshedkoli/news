@@ -26,10 +26,11 @@ export async function GET(req: NextRequest) {
             users,
             pageToken: listUsersResult.pageToken,
         });
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error("Error listing users:", error);
         return NextResponse.json(
-            { error: error.message || "Failed to list users" },
+            { error: message || "Failed to list users" },
             { status: 500 }
         );
     }

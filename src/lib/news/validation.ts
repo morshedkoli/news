@@ -43,6 +43,13 @@ export function validateNewsContent(candidate: ArticleCandidate): ValidationResu
 
     const summary = (candidate.summary || "").trim();
     const title = (candidate.title || "").trim();
+    const content = (candidate.content || candidate.excerpt || "").trim();
+
+    const hasEnglishLetters = (text: string) => /[A-Za-z]/.test(text);
+
+    if (hasEnglishLetters(title) || hasEnglishLetters(summary) || hasEnglishLetters(content)) {
+        reasons.push("ENGLISH_DETECTED");
+    }
 
     // 1. Check Title Language (Mandatory)
     // We check both title and summary. If either is mostly English, we block.

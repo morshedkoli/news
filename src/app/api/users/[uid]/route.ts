@@ -14,7 +14,7 @@ export async function PATCH(
         const currentUser = await authAdmin.getUser(uid);
         const oldEmail = currentUser.email;
 
-        const updateData: any = {};
+        const updateData: Record<string, unknown> = {};
         if (displayName !== undefined) updateData.displayName = displayName;
         if (email !== undefined) updateData.email = email;
         if (password && password.trim() !== "") updateData.password = password;
@@ -65,10 +65,11 @@ export async function PATCH(
                 displayName: userRecord.displayName,
             },
         });
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error("Error updating user:", error);
         return NextResponse.json(
-            { error: error.message || "Failed to update user" },
+            { error: message || "Failed to update user" },
             { status: 500 }
         );
     }

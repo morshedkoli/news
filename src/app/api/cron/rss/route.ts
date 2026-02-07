@@ -13,9 +13,16 @@ export const runtime = 'nodejs';
 const SETTINGS_DOC = "rss_settings";
 const DEFAULT_INTERVAL_MINUTES = 30; // Target: Every 30 mins
 
-export async function GET(req: NextRequest) {
-    const start = Date.now();
+function getTimestampDate(value: unknown): Date | null {
+    if (!value || typeof value !== "object") return null;
+    const maybe = value as { toDate?: unknown };
+    if (typeof maybe.toDate === "function") {
+        return maybe.toDate();
+    }
+    return null;
+}
 
+export async function GET(req: NextRequest) {
     // 1. SECURITY CHECK
     const authorized = checkSecurity(req);
     if (!authorized) {
@@ -48,9 +55,10 @@ export async function GET(req: NextRequest) {
         // If locked AND lock is fresh (less than 10 mins old), SKIP.
         // If locked BUT lock is OLD (expired), IGNORE lock and proceed (Auto-Recovery).
         if (settings.global_lock_until && !forceMode && !dryRun) {
-            const lockExpires = settings.global_lock_until.toDate().getTime();
+            const lockDate = getTimestampDate(settings.global_lock_until);
+            const lockExpires = lockDate ? lockDate.getTime() : 0;
             if (Date.now() < lockExpires) {
-                console.log(`⏸️ System is locked until ${settings.global_lock_until.toDate().toLocaleTimeString()}`);
+                console.log(`⏸️ System is locked until ${lockDate?.toLocaleTimeString()}`);
                 return NextResponse.json({ status: "skipped", reason: "global_lock_active" });
             } else {
                 console.log(`⚠️ Lock expired! Forcing release and proceeding.`);
@@ -83,7 +91,8 @@ export async function GET(req: NextRequest) {
         // B. Global Cooldown Check (Last Successful Publish)
         // Cooldown should ONLY apply if we actually PUBLISHED recently.
         if (settings.last_news_posted_at && !forceMode && !dryRun) {
-            const lastPost = settings.last_news_posted_at.toDate().getTime();
+            const lastPostDate = getTimestampDate(settings.last_news_posted_at);
+            const lastPost = lastPostDate ? lastPostDate.getTime() : 0;
             const minsSince = (Date.now() - lastPost) / 60000;
             const limit = settings.update_interval_minutes || DEFAULT_INTERVAL_MINUTES;
 
@@ -106,7 +115,7 @@ export async function GET(req: NextRequest) {
 
         // 5. EXECUTE ORCHESTRATOR
         const orchestrator = new NewsFetchOrchestrator();
-        const result = await orchestrator.run(forceMode, dryRun);
+        const result = await orchestrator.run();
 
         // 6. CLEAR LOCK
         if (!dryRun) {
@@ -125,13 +134,14 @@ export async function GET(req: NextRequest) {
             result
         });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error("💥 Cron Fatal Error:", error);
         // Force unlock on error
         try {
             await dbAdmin.collection("system_stats").doc(SETTINGS_DOC).update({ global_lock_until: null });
-        } catch (e) { }
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        } catch { }
+        return NextResponse.json({ error: message }, { status: 500 });
     }
 }
 

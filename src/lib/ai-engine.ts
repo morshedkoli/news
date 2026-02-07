@@ -1,6 +1,5 @@
 import { dbAdmin } from "./firebase-admin";
 import { AiProvider, AiResponse, AiGenerationOptions, AIUsageLog, AiModelConfig } from "@/types/ai";
-import { FieldValue } from "firebase-admin/firestore";
 
 // ============================================================================
 // CONFIGURATION
@@ -21,23 +20,16 @@ const DEFAULT_FREE_MODELS: Record<string, AiModelConfig[]> = {
     ]
 };
 
-const FAILURE_THRESHOLD = 3;
-const CACHE_TTL_MS = 60000;
-const MODEL_TIMEOUT_MS = 12000;      // HARD CAP: 12 seconds per model
 
 // ============================================================================
 // PROVIDER CACHE
 // ============================================================================
 
-let providerCache: AiProvider[] | null = null;
-let cacheExpiry: number = 0;
 
 /**
  * Invalidate the provider cache (call after config changes)
  */
 export function invalidateProviderCache(): void {
-    providerCache = null;
-    cacheExpiry = 0;
 }
 
 // ============================================================================
@@ -82,34 +74,6 @@ export async function getActiveProviders(): Promise<AiProvider[]> {
         });
     } catch (error) {
         console.error("Failed to fetch AI providers:", error);
-        return [];
-    }
-}
-
-/**
- * Get providers with in-memory caching
- */
-async function getCachedProviders(): Promise<AiProvider[]> {
-    if (providerCache && Date.now() < cacheExpiry) {
-        return providerCache.filter(p => (p.healthScore ?? 100) >= 30); // Simple filter
-    }
-
-    try {
-        let providers = await getActiveProviders();
-
-        // Environment Safety Check
-        const isVercel = process.env.VERCEL === '1';
-        if (isVercel) {
-            providers = providers.filter(p => p.provider_category !== 'local');
-        }
-
-        providers.sort((a, b) => (b.healthScore ?? 100) - (a.healthScore ?? 100));
-
-        providerCache = providers;
-        cacheExpiry = Date.now() + CACHE_TTL_MS;
-        return providerCache;
-    } catch (e) {
-        console.error("Failed to fetch providers", e);
         return [];
     }
 }
@@ -283,7 +247,7 @@ function scoreModel(m: AiModelConfig): number {
 // SELECTION ENGINE (MANDATORY REQUEST)
 // ============================================================================
 
-export async function selectBestAiModel(task: "summarization" = "summarization"): Promise<{
+export async function selectBestAiModel(): Promise<{
     providerId: string;
     modelId: string;
     apiKey: string;
@@ -354,6 +318,60 @@ export async function selectBestAiModel(task: "summarization" = "summarization")
     };
 }
 
+export async function selectAiModelCandidates(limit = 5): Promise<Array<{
+    provider: AiProvider;
+    model: AiModelConfig;
+    apiKey: string;
+    timeoutMs: number;
+}>> {
+    const providers = await getActiveProviders();
+    const isVercel = process.env.VERCEL === '1';
+
+    const candidates: Array<{
+        provider: AiProvider;
+        model: AiModelConfig;
+        apiKey: string;
+        timeoutMs: number;
+        score: number;
+        providerIndex: number;
+    }> = [];
+
+    providers.forEach((provider, providerIndex) => {
+        if (isVercel && provider.provider_category === 'local') return;
+        if ((provider.healthScore ?? 100) < 30) return;
+        if (!provider.models || provider.models.length === 0) return;
+
+        for (const model of provider.models) {
+            if (!model.enabled) continue;
+            if (model.pausedUntil && new Date(model.pausedUntil).getTime() > Date.now()) continue;
+            if ((model.healthScore ?? 100) < 50) continue;
+
+            const score = scoreModel(model);
+            candidates.push({
+                provider,
+                model,
+                apiKey: resolveApiKey(provider.apiKey),
+                timeoutMs: 12000,
+                score,
+                providerIndex
+            });
+        }
+    });
+
+    candidates.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        if (a.providerIndex !== b.providerIndex) return a.providerIndex - b.providerIndex;
+        return (a.model.priority || 0) - (b.model.priority || 0);
+    });
+
+    return candidates.slice(0, Math.max(1, limit)).map(({ provider, model, apiKey, timeoutMs }) => ({
+        provider,
+        model,
+        apiKey,
+        timeoutMs
+    }));
+}
+
 // ============================================================================
 // MAIN ENTRY POINT - generateContent()
 // ============================================================================
@@ -368,7 +386,7 @@ export async function generateContent(
 ): Promise<AiResponse | null> {
 
     // 1. Select Best Model
-    const config = await selectBestAiModel("summarization");
+    const config = await selectBestAiModel();
 
     if (!config) {
         console.error("⛔ AI Gateway: Selection returned null (No models available).");
@@ -386,6 +404,30 @@ export async function generateContent(
         timeoutMs,
         config.apiKey // Pass resolved key
     );
+}
+
+export async function generateContentWithFallback(
+    prompt: string,
+    options: AiGenerationOptions = {},
+    maxAttempts = 2
+): Promise<AiResponse | null> {
+    const candidates = await selectAiModelCandidates(maxAttempts);
+    if (candidates.length === 0) return null;
+
+    for (const candidate of candidates) {
+        const result = await generateContentInternal(
+            candidate.provider,
+            candidate.model,
+            prompt,
+            options,
+            candidate.timeoutMs,
+            candidate.apiKey
+        );
+
+        if (result?.content) return result;
+    }
+
+    return null;
 }
 
 async function generateContentInternal(
@@ -441,12 +483,13 @@ async function generateContentInternal(
             estimatedTokens: estTokens
         };
 
-    } catch (error: any) {
+    } catch (error: unknown) {
         const duration = Date.now() - start;
-        console.warn(`❌ AI Fail: [${model.id}] - ${error.message} (${duration}ms)`);
+        const message = error instanceof Error ? error.message : "Unknown error";
+        console.warn(`❌ AI Fail: [${model.id}] - ${message} (${duration}ms)`);
 
         // Update stats
-        updateModelStats(provider.id, model.id, false, duration, error.message);
+        updateModelStats(provider.id, model.id, false, duration, message);
 
         logUsage({
             providerId: provider.id,
@@ -455,7 +498,7 @@ async function generateContentInternal(
             estimatedPromptTokens: estTokens,
             latencyMs: duration,
             success: false,
-            errorMessage: error.message,
+            errorMessage: message,
             feature: options.feature || 'unknown'
         });
 
@@ -484,7 +527,7 @@ async function callProviderTemplate(
     }
 
     // 2. Prepare Body
-    let body: any = undefined;
+    let body: string | undefined = undefined;
     if (p.body_template) {
         let bodyStr = JSON.stringify(p.body_template);
 
@@ -516,7 +559,7 @@ async function callProviderTemplate(
             throw new Error(`HTTP ${res.status}: ${err}`);
         }
 
-        const data = await res.json();
+        const data: unknown = await res.json();
 
         // 4. Validate Success Condition
         if (p.success_condition) {
@@ -526,12 +569,12 @@ async function callProviderTemplate(
         }
 
         // 5. Extract Content
-        let content: any = data;
+        let content: unknown = data;
         if (p.response_path) {
             const path = p.response_path.replace(/^\[/, '').replace(/\]/g, '').split(/[.\[\]]/).filter(Boolean);
             for (const key of path) {
                 if (content && typeof content === 'object' && key in content) {
-                    content = content[key];
+                    content = (content as Record<string, unknown>)[key];
                 } else {
                     throw new Error(`Path '${p.response_path}' not found in response`);
                 }
@@ -539,17 +582,15 @@ async function callProviderTemplate(
         }
 
         // 6. Final Validation
-        if (typeof content !== 'string') {
-            content = JSON.stringify(content);
-        }
+        const finalContent = typeof content === 'string' ? content : JSON.stringify(content);
 
-        if (!content || content.trim().length === 0) {
+        if (!finalContent || finalContent.trim().length === 0) {
             throw new Error("Extracted content is empty");
         }
 
-        return content;
+        return finalContent;
 
-    } catch (e: any) {
+    } catch (e: unknown) {
         clearTimeout(id);
         throw e;
     }
@@ -561,5 +602,46 @@ async function callProviderTemplate(
 
 // (We can stub these as we are moving to model-based stats, but cron calls them. Better to keep safe stubs)
 export async function recoverDegradedProviders() { return { recovered: [], stillFailed: [] }; }
-export async function testProviderConnection(p: AiProvider) { return { success: true, latencyMs: 0, message: '' }; }
-export async function updateProviderStatus(id: string, s: string) { }
+export async function testProviderConnection(provider: AiProvider) {
+    const start = Date.now();
+    const timeoutMs = provider.timeout_ms ?? 12000;
+
+    if (provider.provider_category !== 'local' && !provider.apiKey) {
+        return { success: false, latencyMs: 0, message: 'Missing API key' };
+    }
+
+    try {
+        const content = await callProviderTemplate(
+            provider,
+            'Respond with "OK" only.',
+            'You are a health check. Reply with OK only.',
+            { feature: 'test' },
+            timeoutMs
+        );
+
+        const latencyMs = Date.now() - start;
+        if (!content || !content.toString().trim()) {
+            return { success: false, latencyMs, message: 'Empty response' };
+        }
+
+        return { success: true, latencyMs, message: 'OK' };
+    } catch (error: unknown) {
+        const latencyMs = Date.now() - start;
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        return { success: false, latencyMs, message };
+    }
+}
+export async function updateProviderStatus(id: string, status: string) {
+    try {
+        const normalizedStatus = status === 'online' ? 'healthy' : 'unhealthy';
+        const healthScore = status === 'online' ? 100 : 0;
+        await dbAdmin.collection('ai_providers').doc(id).set({
+            healthStatus: normalizedStatus,
+            healthScore,
+            isHealthy: status === 'online',
+            lastUpdated: new Date().toISOString()
+        }, { merge: true });
+    } catch (e) {
+        console.error('Failed to update provider status:', e);
+    }
+}
