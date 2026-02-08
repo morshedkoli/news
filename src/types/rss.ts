@@ -52,6 +52,9 @@ export interface RssSettings {
     summary_min_length?: number;
     translation_retry_enabled?: boolean;
 
+    // Cleanup Settings
+    news_retention_days?: number; // Days to keep published news (0 = disable auto-cleanup, default 20)
+
     // Stats & Health
     consecutive_failed_runs?: number;
     last_successful_run?: unknown;
