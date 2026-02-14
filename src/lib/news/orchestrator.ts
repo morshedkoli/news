@@ -183,8 +183,18 @@ export class NewsFetchOrchestrator {
 
         const tier = score >= 80 ? 'high' : score >= 60 ? 'medium' : 'low';
         const hasImage = !!candidate.image && (typeof candidate.image !== 'string' || candidate.image.trim().length > 0);
-        const publishable = score >= this.settings.minPublishScore && (!this.settings.requireImageForPublish || hasImage);
-        const queueable = score >= this.settings.minQueueScore;
+
+        // STEUCT ENGLISH BLOCK: If title/summary is English, do not publish or queue
+        const hasEnglishTitle = !!(title && hasEnglishLetters(title) && !isBanglaText(title));
+        const hasEnglishSummary = !!(summaryText && hasEnglishLetters(summaryText) && !isBanglaText(summaryText));
+        const isEnglishContent = hasEnglishTitle || hasEnglishSummary;
+
+        if (isEnglishContent) {
+            issues.push('ENGLISH_CONTENT_DETECTED');
+        }
+
+        const publishable = score >= this.settings.minPublishScore && (!this.settings.requireImageForPublish || hasImage) && !isEnglishContent;
+        const queueable = score >= this.settings.minQueueScore && !isEnglishContent;
 
         return { score, issues, tier, publishable, queueable };
     }
@@ -598,6 +608,26 @@ Category: ${candidate.category}`,
             if (due.length === 0) return { published: false };
 
             const next = due[0];
+            const nextData = next.data as any; // Type assertion for easier access
+
+            // STRICT VALIDATION: Check for English content before publishing
+            // Sometimes English content gets queued; we must delete it instead of publishing.
+            const hasEnglishLetters = (t: string) => /[A-Za-z]/.test(t);
+            const titleNotBangla = typeof nextData.title === 'string' && hasEnglishLetters(nextData.title) && !isBanglaText(nextData.title);
+            // Check summary only if it's long enough to be significant
+            const summaryNotBangla = typeof nextData.summary === 'string'
+                && nextData.summary.length > 20
+                && hasEnglishLetters(nextData.summary)
+                && !isBanglaText(nextData.summary);
+
+            if (titleNotBangla || summaryNotBangla) {
+                console.log(`[Orchestrator] 🗑️ Deleting queued item (English detected): ${nextData.title}`);
+                await dbAdmin.collection('news').doc(next.id).delete();
+
+                // Recursively try next item? For now just return slightly processed state
+                return { published: false };
+            }
+
             const newsRef = dbAdmin.collection('news').doc(next.id);
             const statsRef = dbAdmin.collection('system_stats').doc('rss_settings');
 
@@ -659,6 +689,12 @@ Category: ${candidate.category}`,
         let categoryId: string | undefined;
         let categorySlug: string | undefined;
         const categoryName = candidate.category || "General";
+
+        // Final Safety Gate: Block English Titles
+        const hasEnglish = (t: string) => /[A-Za-z]/.test(t);
+        if (candidate.title && hasEnglish(candidate.title) && !isBanglaText(candidate.title)) {
+            throw new Error('publish_blocked_english_content');
+        }
 
         // Resolve Category
         try {
